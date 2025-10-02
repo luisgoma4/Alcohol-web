@@ -1,5 +1,3 @@
-# Calculadora de BrAC/BAC — Streamlit + Docker
-
 # Alcohol Absorption and Breath Alcohol Concentration Modeling - Python + Streamlit + Docker
 
 🔗 Project website: [https://luisgoma4.github.io/Alcohol-web/](https://luisgoma4.github.io/Alcohol-web/)  
