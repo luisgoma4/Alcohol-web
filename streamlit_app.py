@@ -3,21 +3,21 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-# Importa tu modelo existente
+# Import your existing model
 try:
     from alcohol_test3 import Subject, ModelOptions, simulate_brac, beverages
 except Exception as e:
-    st.error("No se pudo importar 'alcohol_test3'. Asegúrate de que alcohol_test3.py está en esta carpeta.\n" + str(e))
+    st.error("Could not import 'alcohol_test3'. Make sure that alcohol_test3.py is in this folder.\n" + str(e))
     st.stop()
 
 st.set_page_config(
-    page_title="Calculadora de Alcohol en Aliento (BrAC) · Interactiva",
+    page_title="Interactive Breath Alcohol Calculator (BrAC) · Pharmacokinetic Model",
     page_icon="🍺",
     layout="wide",
 )
 
 # =========================
-# Estilos
+# Styles
 # =========================
 st.markdown(
     """
@@ -30,146 +30,145 @@ div[data-testid="stMetricValue"] { font-size: 1.4rem; }
     unsafe_allow_html=True,
 )
 
-st.title("🍺 Calculadora interactiva de tasa de alcohol (BrAC/BAC)")
-st.caption("Simulación farmacocinética con absorción GI → compartimento central y eliminación configurable.")
+st.title("🍺 Interactive Alcohol Concentration Calculator (BrAC/BAC)")
+st.caption("Pharmacokinetic simulation with GI absorption → central compartment and configurable elimination.")
 
 # =========================
 # Sidebar: Presets
 # =========================
-st.sidebar.header("⚙️ Presets rápidos")
+st.sidebar.header("⚙️ Quick presets")
 preset = st.sidebar.selectbox(
-    "Escenario inicial",
+    "Initial scenario",
     [
-        "Licor en ayuno (4×40 ml)",
-        "Cerveza (330 ml) + comida",
-        "Vino (2×150 ml, cena ligera)",
-        "Personalizado vacío",
+        "Liquor on empty stomach (4×40 ml)",
+        "Beer (330 ml) + meal",
+        "Wine (2×150 ml, light dinner)",
+        "Empty custom setup",
     ],
     index=0,
 )
 
 # =========================
-# Columnas principales
+# Main columns
 # =========================
 col_left, col_right = st.columns([1.2, 1])
 
 with col_left:
-    st.subheader("👤 Datos del sujeto")
+    st.subheader("👤 Subject data")
     c1, c2, c3, c4 = st.columns(4)
-    weight_kg = c1.number_input("Peso (kg)", 40.0, 180.0, 70.0, step=1.0)
-    height_cm = c2.number_input("Altura (cm)", 140.0, 210.0, 175.0, step=1.0)
-    age_years = c3.number_input("Edad (años)", 18.0, 90.0, 35.0, step=1.0)
-    sex = c4.selectbox("Sexo", ["male", "female"])
+    weight_kg = c1.number_input("Weight (kg)", 40.0, 180.0, 70.0, step=1.0)
+    height_cm = c2.number_input("Height (cm)", 140.0, 210.0, 175.0, step=1.0)
+    age_years = c3.number_input("Age (years)", 18.0, 90.0, 35.0, step=1.0)
+    sex = c4.selectbox("Sex", ["male", "female"])
 
     c5, c6 = st.columns(2)
-    breath_temp_c = c5.slider("Temperatura del aire espirado (°C)", 31.0, 37.0, 34.0, 0.1)
-    habitual_level = c6.slider("Consumo habitual / tolerancia (0=naïf · 1=alto)", 0.0, 1.0, 0.5, 0.05)
+    breath_temp_c = c5.slider("Exhaled air temperature (°C)", 31.0, 37.0, 34.0, 0.1)
+    habitual_level = c6.slider("Habitual consumption / tolerance (0=naïve · 1=high)", 0.0, 1.0, 0.5, 0.05)
 
-    vd_method = st.radio("Volumen de distribución", ["watson", "fixed_r"], horizontal=True)
-    r_widmark = st.slider("r de Widmark (L/kg) · solo si 'fixed_r'", 0.45, 0.80, 0.60, 0.01)
+    vd_method = st.radio("Distribution volume method", ["watson", "fixed_r"], horizontal=True)
+    r_widmark = st.slider("Widmark r (L/kg) · only if 'fixed_r'", 0.45, 0.80, 0.60, 0.01)
 
 with col_right:
-    st.subheader("📏 Límites de referencia (editables)")
+    st.subheader("📏 Reference limits (editable)")
     lim_col1, lim_col2 = st.columns(2)
-    limit_brac = lim_col1.number_input("Límite BrAC (mg/L aire)", 0.05, 1.50, 0.25, 0.01)
-    limit_bac = lim_col2.number_input("Límite BAC (g/L sangre)", 0.10, 2.00, 0.50, 0.05)
+    limit_brac = lim_col1.number_input("BrAC limit (mg/L air)", 0.05, 1.50, 0.25, 0.01)
+    limit_bac = lim_col2.number_input("BAC limit (g/L blood)", 0.10, 2.00, 0.50, 0.05)
 
-    st.subheader("⏱️ Tiempo de simulación")
+    st.subheader("⏱️ Simulation time")
     dur_col1, dur_col2 = st.columns(2)
-    duration_h = dur_col1.slider("Duración total (h)", 1.0, 24.0, 12.0, 0.5)
-    dt_h = dur_col2.select_slider("Resolución temporal", options=[0.01, 0.005, 0.0025, 0.001], value=0.0025)
-    st.caption("Consejo: 0.0025 h ≈ 9 s por paso (buena precisión).")
+    duration_h = dur_col1.slider("Total duration (h)", 1.0, 24.0, 12.0, 0.5)
+    dt_h = dur_col2.select_slider("Time resolution", options=[0.01, 0.005, 0.0025, 0.001], value=0.0025)
+    st.caption("Tip: 0.0025 h ≈ 9 s per step (good precision).")
 
 # =========================
-# Panel Avanzado
+# Advanced panel
 # =========================
-with st.expander("🧪 Parámetros avanzados del modelo (absorción, eliminación, BBR) y tablas orientativas", expanded=False):
-    st.markdown("**Absorción** (primer orden desde GI):")
+with st.expander("🧪 Advanced model parameters (absorption, elimination, BBR) and reference tables", expanded=False):
+    st.markdown("**Absorption** (first order from GI):")
     a1, a2, a3 = st.columns(3)
-    ka_h = a1.number_input("ka (h⁻¹) base", 0.1, 8.0, 2.4, 0.1)
-    food_factor = a2.slider("Factor comida (↓ absorción)", 0.3, 1.3, 0.8, 0.05)
-    carbonation_factor = a3.slider("Factor carbonatación (↑ absorción)", 0.7, 1.5, 1.1, 0.05)
+    ka_h = a1.number_input("Base ka (h⁻¹)", 0.1, 8.0, 2.4, 0.1)
+    food_factor = a2.slider("Meal factor (↓ absorption)", 0.3, 1.3, 0.8, 0.05)
+    carbonation_factor = a3.slider("Carbonation factor (↑ absorption)", 0.7, 1.5, 1.1, 0.05)
 
     st.markdown("---")
-    st.markdown("**Eliminación** (elige modo):")
+    st.markdown("**Elimination** (choose mode):")
     elimination_mode = st.radio(
-        "Modo de eliminación",
+        "Elimination mode",
         ["mm", "zero", "ke"],
         index=0,
-        help="mm=Michaelis–Menten; zero=orden cero; ke=primer orden",
+        help="mm=Michaelis–Menten; zero=zero order; ke=first order",
     )
 
     e1, e2, e3, e4 = st.columns(4)
     Vmax_g_per_L_h = e1.number_input("Vmax (g/L·h)", 0.05, 0.60, 0.20, 0.01)
     Km_g_per_L = e2.number_input("Km (g/L)", 0.02, 0.60, 0.15, 0.01)
-    beta_g_per_L_h = e3.number_input("β (g/L·h) (orden 0)", 0.05, 0.60, 0.18, 0.01)
-    ke_h = e4.number_input("ke (h⁻¹) (1er orden)", 0.05, 0.60, 0.15, 0.01)
+    beta_g_per_L_h = e3.number_input("β (g/L·h) (zero order)", 0.05, 0.60, 0.18, 0.01)
+    ke_h = e4.number_input("ke (h⁻¹) (first order)", 0.05, 0.60, 0.15, 0.01)
 
     st.markdown("---")
-    st.markdown("**Relación sangre:aliento (BBR)**:")
+    st.markdown("**Blood:Breath Ratio (BBR)**:")
     b1, b2 = st.columns(2)
-    BBR_base = b1.number_input("BBR base", 1500.0, 3000.0, 2100.0, 50.0)
-    bbr_temp_coeff_per_deg = b2.number_input("Coef. térmico por °C (≈ −0.065 opcional)", -0.20, 0.20, 0.00, 0.005)
+    BBR_base = b1.number_input("Base BBR", 1500.0, 3000.0, 2100.0, 50.0)
+    bbr_temp_coeff_per_deg = b2.number_input("Thermal coefficient per °C (≈ −0.065 optional)", -0.20, 0.20, 0.00, 0.005)
 
     st.markdown("---")
-    st.markdown("**Tablas orientativas**")
+    st.markdown("**Reference tables**")
     df_abs = pd.DataFrame(
         {
-            "Condición": ["Ayuno", "Comida ligera", "Comida copiosa", "Muy carbonatada", "Sin gas"],
-            "ka típico (h⁻¹)": [3.0, 2.0, 1.2, 1.2, 1.0],
-            "Factor comida": [1.0, 0.8, 0.6, None, None],
-            "Factor carbonatación": [None, None, None, 1.2, 1.0],
+            "Condition": ["Fasting", "Light meal", "Heavy meal", "Highly carbonated", "Non-carbonated"],
+            "Typical ka (h⁻¹)": [3.0, 2.0, 1.2, 1.2, 1.0],
+            "Meal factor": [1.0, 0.8, 0.6, None, None],
+            "Carbonation factor": [None, None, None, 1.2, 1.0],
         }
     )
     st.dataframe(df_abs, use_container_width=True)
 
     df_elim = pd.DataFrame(
         {
-            "Modo": ["Michaelis–Menten", "Orden cero", "Primer orden"],
-            "Parámetros clave": ["Vmax, Km", "β", "ke"],
-            "Notas": [
-                "Saturable; más realista a concentraciones altas",
-                "Ritmo fijo de eliminación (aprox. clínica clásica)",
-                "Proporcional a concentración; útil a bajas concentraciones",
+            "Mode": ["Michaelis–Menten", "Zero order", "First order"],
+            "Key parameters": ["Vmax, Km", "β", "ke"],
+            "Notes": [
+                "Saturable; more realistic at high concentrations",
+                "Fixed elimination rate (classical clinical approximation)",
+                "Proportional to concentration; useful at low concentrations",
             ],
         }
     )
     st.dataframe(df_elim, use_container_width=True)
 
 # =========================
-# Presets de dosis
+# Dose presets
 # =========================
 def preset_doses(name: str):
-    if name == "Licor en ayuno (4×40 ml)":
+    if name == "Liquor on empty stomach (4×40 ml)":
         base = [
-            {"t_ingesta_h": 0.00, "volumen_ml": 40, "tipo_bebida": "licor", "ka_scale": 1.0},
-            {"t_ingesta_h": 0.75, "volumen_ml": 40, "tipo_bebida": "licor", "ka_scale": 1.0},
-            {"t_ingesta_h": 1.50, "volumen_ml": 40, "tipo_bebida": "licor", "ka_scale": 1.0},
-            {"t_ingesta_h": 2.15, "volumen_ml": 40, "tipo_bebida": "licor", "ka_scale": 1.0},
+            {"t_ingesta_h": 0.00, "volumen_ml": 40, "tipo_bebida": "liquor", "ka_scale": 1.0},
+            {"t_ingesta_h": 0.75, "volumen_ml": 40, "tipo_bebida": "liquor", "ka_scale": 1.0},
+            {"t_ingesta_h": 1.50, "volumen_ml": 40, "tipo_bebida": "liquor", "ka_scale": 1.0},
+            {"t_ingesta_h": 2.15, "volumen_ml": 40, "tipo_bebida": "liquor", "ka_scale": 1.0},
         ]
         return base, dict(food_factor=0.8, carbonation_factor=1.1)
-    elif name == "Cerveza (330 ml) + comida":
-        base = [
-            {"t_ingesta_h": 0.00, "volumen_ml": 330, "tipo_bebida": "cerveza", "ka_scale": 0.9},
-        ]
+    elif name == "Beer (330 ml) + meal":
+        base = [{"t_ingesta_h": 0.00, "volumen_ml": 330, "tipo_bebida": "beer", "ka_scale": 0.9}]
         return base, dict(food_factor=0.7, carbonation_factor=1.2)
-    elif name == "Vino (2×150 ml, cena ligera)":
+    elif name == "Wine (2×150 ml, light dinner)":
         base = [
-            {"t_ingesta_h": 0.00, "volumen_ml": 150, "tipo_bebida": "vino", "ka_scale": 1.0},
-            {"t_ingesta_h": 0.75, "volumen_ml": 150, "tipo_bebida": "vino", "ka_scale": 1.0},
+            {"t_ingesta_h": 0.00, "volumen_ml": 150, "tipo_bebida": "wine", "ka_scale": 1.0},
+            {"t_ingesta_h": 0.75, "volumen_ml": 150, "tipo_bebida": "wine", "ka_scale": 1.0},
         ]
         return base, dict(food_factor=0.8, carbonation_factor=1.0)
     else:
-        return ([{"t_ingesta_h": 0.00, "volumen_ml": 40, "tipo_bebida": "licor", "ka_scale": 1.0}], {})
+        return ([{"t_ingesta_h": 0.00, "volumen_ml": 40, "tipo_bebida": "liquor", "ka_scale": 1.0}], {})
 
 base_doses, preset_opt_overrides = preset_doses(preset)
 
 # =========================
-# Editor de dosis por tabla
+# Dose editor table
 # =========================
-st.subheader("🍷 Patrón de ingesta (editable)")
+st.subheader("🍷 Intake pattern (editable)")
 st.caption(
-    "Edita tiempos (h), volúmenes y tipo. Añade o borra filas. `tipo_bebida` debe estar en el catálogo: " + ", ".join(f"{k} ({int(v*100)}%)" for k, v in beverages.items())
+    "Edit times (h), volumes, and beverage type. Add or delete rows. `tipo_bebida` must exist in the catalog: "
+    + ", ".join(f"{k} ({int(v*100)}%)" for k, v in beverages.items())
 )
 
 edited_df = st.data_editor(
@@ -177,21 +176,21 @@ edited_df = st.data_editor(
     num_rows="dynamic",
     use_container_width=True,
     column_config={
-        "t_ingesta_h": st.column_config.NumberColumn("t_ingesta_h (h)", step=0.05, help="Hora relativa desde t=0"),
-        "volumen_ml": st.column_config.NumberColumn("volumen (ml)", step=5),
-        "tipo_bebida": st.column_config.TextColumn("tipo_bebida", help="p. ej., cerveza, vino, licor"),
-        "ka_scale": st.column_config.NumberColumn("ka_scale", step=0.05, help="Ajuste local de ka para esa ingesta"),
+        "t_ingesta_h": st.column_config.NumberColumn("t_ingesta_h (h)", step=0.05, help="Relative time from t=0"),
+        "volumen_ml": st.column_config.NumberColumn("volume (ml)", step=5),
+        "tipo_bebida": st.column_config.TextColumn("beverage_type", help="e.g., beer, wine, liquor"),
+        "ka_scale": st.column_config.NumberColumn("ka_scale", step=0.05, help="Local ka adjustment for that intake"),
     },
 )
 
 # =========================
-# Construcción de objetos del modelo
+# Model object construction
 # =========================
 if preset_opt_overrides:
     food_factor = preset_opt_overrides.get("food_factor", food_factor)
     carbonation_factor = preset_opt_overrides.get("carbonation_factor", carbonation_factor)
 
-sujeto = Subject(
+subject = Subject(
     weight_kg=weight_kg,
     height_cm=height_cm,
     age_years=age_years,
@@ -202,7 +201,7 @@ sujeto = Subject(
     r_widmark=r_widmark,
 )
 
-opciones = ModelOptions(
+options = ModelOptions(
     ka_h=ka_h,
     food_factor=food_factor,
     carbonation_factor=carbonation_factor,
@@ -216,7 +215,7 @@ opciones = ModelOptions(
 )
 
 # =========================
-# Preparar tupla de dosis para el motor
+# Prepare dose tuples for engine
 # =========================
 doses = []
 for _, row in edited_df.iterrows():
@@ -228,63 +227,63 @@ for _, row in edited_df.iterrows():
 
 invalid = [d for d in doses if d[1] <= 0 or d[0] < 0 or d[2] not in beverages]
 if invalid:
-    st.error("Hay filas inválidas en la tabla (volumen ≤ 0, tiempo < 0 o tipo fuera de catálogo). Corrige para simular.")
+    st.error("Invalid rows in table (volume ≤ 0, time < 0 or beverage not in catalog). Correct before running simulation.")
     st.stop()
 
 # =========================
-# Simulación
+# Simulation
 # =========================
 times, BAC, BrAC = simulate_brac(
-    subject=sujeto,
+    subject=subject,
     doses=doses,
-    opts=opciones,
+    opts=options,
     duration_h=duration_h,
     dt_h=dt_h,
 )
 
 # =========================
-# Métricas rápidas
+# Quick metrics
 # =========================
 idx_max = int(np.argmax(BrAC))
 brac_max = float(BrAC[idx_max])
 tmax = float(times[idx_max])
 
 m1, m2, m3 = st.columns(3)
-m1.metric("BrAC máx (mg/L aire)", f"{brac_max:.3f}", help="Pico de alcohol en aire espirado")
-m2.metric("t(pico) (h)", f"{tmax:.2f}")
-m3.metric("BAC al pico (g/L)", f"{float(BAC[idx_max]):.3f}")
+m1.metric("Max BrAC (mg/L air)", f"{brac_max:.3f}", help="Peak alcohol concentration in exhaled air")
+m2.metric("t(peak) (h)", f"{tmax:.2f}")
+m3.metric("BAC at peak (g/L)", f"{float(BAC[idx_max]):.3f}")
 
 # =========================
-# Gráficas
+# Graphs
 # =========================
-st.subheader("📈 Resultados")
+st.subheader("📈 Results")
 
-fig_brac = px.line(x=times, y=BrAC, labels={"x": "Tiempo (h)", "y": "BrAC (mg/L aire)"}, title="BrAC vs tiempo")
-fig_brac.add_hline(y=limit_brac, line_dash="dash", annotation_text=f"Límite BrAC = {limit_brac:.2f} mg/L")
+fig_brac = px.line(x=times, y=BrAC, labels={"x": "Time (h)", "y": "BrAC (mg/L air)"}, title="BrAC vs Time")
+fig_brac.add_hline(y=limit_brac, line_dash="dash", annotation_text=f"BrAC limit = {limit_brac:.2f} mg/L")
 st.plotly_chart(fig_brac, use_container_width=True, theme="streamlit")
 
-fig_bac = px.line(x=times, y=BAC, labels={"x": "Tiempo (h)", "y": "BAC (g/L)"}, title="BAC vs tiempo")
-fig_bac.add_hline(y=limit_bac, line_dash="dash", annotation_text=f"Límite BAC = {limit_bac:.2f} g/L")
+fig_bac = px.line(x=times, y=BAC, labels={"x": "Time (h)", "y": "BAC (g/L)"}, title="BAC vs Time")
+fig_bac.add_hline(y=limit_bac, line_dash="dash", annotation_text=f"BAC limit = {limit_bac:.2f} g/L")
 st.plotly_chart(fig_bac, use_container_width=True, theme="streamlit")
 
 # =========================
-# Descarga de datos
+# Data export
 # =========================
-st.subheader("💾 Exportar datos")
+st.subheader("💾 Export data")
 out_df = pd.DataFrame({"t_h": times, "BAC_g_per_L": BAC, "BrAC_mg_per_L": BrAC})
 csv = out_df.to_csv(index=False).encode("utf-8")
-st.download_button("Descargar CSV (t, BAC, BrAC)", data=csv, file_name="simulacion_brac_bac.csv", mime="text/csv")
+st.download_button("Download CSV (t, BAC, BrAC)", data=csv, file_name="brac_bac_simulation.csv", mime="text/csv")
 
 # =========================
-# Ayuda / Notas
+# Help / Notes
 # =========================
-with st.expander("ℹ️ Notas del modelo y uso responsable"):
+with st.expander("ℹ️ Model notes and responsible use"):
     st.markdown(
         """
-- El modelo usa **absorción de 1.º orden** desde el tracto GI y eliminación configurable (**Michaelis–Menten**, **orden cero** o **primer orden**).
-- La **tolerancia/consumo habitual** ajusta parámetros de eliminación (↑Vmax/β, ligera variación de Km), como aproximación práctica.
-- **BBR** (blood:breath ratio) por defecto 2100, con opción a corrección térmica del aire espirado.
-- Los límites legales pueden variar por país y condición; aquí son **campos editables**.
-- Esta herramienta es educativa; **no** sustituye pruebas oficiales ni asesoramiento legal o médico.
+- The model uses **first-order absorption** from the GI tract and configurable elimination (**Michaelis–Menten**, **zero order**, or **first order**).
+- **Tolerance/habitual consumption** adjusts elimination parameters (↑Vmax/β, slight Km variation) as a practical approximation.
+- **BBR** (blood:breath ratio) default = 2100, with optional thermal correction for exhaled air.
+- Legal limits may vary by country and condition; these are **editable fields**.
+- This tool is educational and **not** a substitute for official testing or medical/legal advice.
         """
     )
