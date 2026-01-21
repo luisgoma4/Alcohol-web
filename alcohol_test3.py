@@ -76,9 +76,16 @@ class ModelOptions:
 # ================================================================
 
 beverages = {
+    'beer': 0.05
+    'wine': 0.12
+    'liquor': 0.40
+    'absenta': 0.9
+    'absinthe': 0.9
     'cerveza': 0.05,
     'vino': 0.12,
-    'licor': 0.40,
+    'licor': 0.45,
+    'chupito': 0.3,
+    'shot': 0.3
     # puedes añadir más: 'cava': 0.115, 'refresco+vodka': 0.40, etc.
 }
 
@@ -208,9 +215,9 @@ def simulate_brac(
 if __name__ == "__main__":
     # === Definir sujeto ===
     sujeto = Subject(
-        weight_kg=70,
-        height_cm=175,
-        age_years=35,
+        weight_kg=62,
+        height_cm=180,
+        age_years=26,
         sex='male',
         breath_temp_c=34.0,
         habitual_level=0.5,  # consumidor habitual medio
