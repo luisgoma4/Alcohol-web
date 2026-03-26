@@ -76,11 +76,11 @@ class ModelOptions:
 # ================================================================
 
 beverages = {
-    'beer': 0.05
-    'wine': 0.12
-    'liquor': 0.40
-    'absenta': 0.9
-    'absinthe': 0.9
+    'beer': 0.05,
+    'wine': 0.12,
+    'liquor': 0.40,
+    'absenta': 0.9,
+    'absinthe': 0.9,
     'cerveza': 0.05,
     'vino': 0.12,
     'licor': 0.45,
