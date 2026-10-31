@@ -79,5 +79,17 @@ To ensure **portability and reproducibility**, a **Docker container** is include
 git clone https://github.com/luisgoma4/Alcohol-web.git
 cd Alcohol-web
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run streamlit_app.py
 
+```
+
+### Using the web app
+
+1. **About you** – sex, age, weight and height.
+2. **What have you had?** – one tap per drink (small beer, bottle of beer, glass of wine, mixed drink, shot) adds it at the current time; edit time, drink or amount in the table.
+3. **Have you eaten?** – empty stomach / light snack / full meal.
+4. **Result** – peak breath and blood alcohol, and the time you'll be back under your limit (general or novice/professional).
+
+Model parameters (absorption, elimination, BBR, tolerance, time step…) have standard values and are tucked away under **Advanced model options**, with a button to restore them.
+
+The interface is available in Spanish and English. Everything the user enters is remembered **only in their browser** (`localStorage`); nothing is stored on the server. **Forget my data** erases it.

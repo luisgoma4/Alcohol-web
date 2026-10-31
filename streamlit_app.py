@@ -1,289 +1,517 @@
+import datetime as dt
+from zoneinfo import ZoneInfo
+
 import numpy as np
 import pandas as pd
-import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
-# Import your existing model
+import storage
+from config import (
+    ADVANCED_DEFAULTS,
+    DEFAULTS,
+    DRINKS,
+    FOOD_FACTORS,
+    LIMITS,
+    QUICK_DRINKS,
+    STORAGE_KEY,
+)
+from i18n import LANGUAGES, translator
+
 try:
-    from alcohol_test3 import Subject, ModelOptions, simulate_brac, beverages
+    from alcohol_test3 import ModelOptions, Subject, simulate_brac
 except Exception as e:
     st.error("Could not import 'alcohol_test3'. Make sure that alcohol_test3.py is in this folder.\n" + str(e))
     st.stop()
 
-st.set_page_config(
-    page_title="Interactive Breath Alcohol Calculator (BrAC) · Pharmacokinetic Model",
-    page_icon="🍺",
-    layout="wide",
-)
+ss = st.session_state
 
 # =========================
-# Styles
+# Time helpers (drinks are entered as clock times in the user's time zone)
 # =========================
+def _tz():
+    try:
+        return ZoneInfo(st.context.timezone) if st.context.timezone else None
+    except Exception:
+        return None
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(_tz()).replace(tzinfo=None, second=0, microsecond=0)
+
+
+def _parse_time(value) -> dt.time:
+    if isinstance(value, dt.time):
+        return value.replace(second=0, microsecond=0)
+    if isinstance(value, dt.datetime):
+        return value.time().replace(second=0, microsecond=0)
+    text = str(value).strip()
+    if "T" in text:
+        text = text.split("T", 1)[1]
+    hh, mm = text.split(":")[:2]
+    return dt.time(int(hh), int(mm[:2]))
+
+
+def _fmt_time(value: dt.time) -> str:
+    return value.strftime("%H:%M")
+
+
+def _offsets_hours(times: list[dt.time]) -> tuple[list[float], dt.time]:
+    """Hours since the first drink, handling nights that cross midnight.
+
+    The largest gap around the clock is taken as the time without drinking,
+    so 23:30 → 00:30 counts as one hour later, not 23 hours earlier.
+    """
+    minutes = [t_.hour * 60 + t_.minute for t_ in times]
+    uniq = sorted(set(minutes))
+    gaps = [(uniq[(i + 1) % len(uniq)] - m) % 1440 or 1440 for i, m in enumerate(uniq)]
+    start = uniq[(int(np.argmax(gaps)) + 1) % len(uniq)]
+    return [((m - start) % 1440) / 60.0 for m in minutes], dt.time(start // 60, start % 60)
+
+
+# =========================
+# State: defaults + data remembered in the browser
+# =========================
+def _browser_lang() -> str:
+    locale = (st.context.locale or "").lower()
+    return "es" if locale.startswith("es") or not locale else "en"
+
+
+def _set_defaults(force: bool = False):
+    base = dict(DEFAULTS, lang=ss.get("lang", _browser_lang()))
+    for k, v in base.items():
+        if force or k not in ss:
+            ss[k] = v
+    for k, v in ADVANCED_DEFAULTS.items():
+        if force or f"adv_{k}" not in ss:
+            ss[f"adv_{k}"] = v
+    if force or "drinks" not in ss:
+        ss.drinks = []
+    ss.setdefault("editor_ver", 0)
+
+
+# Allowed values (choices or numeric ranges) for anything read back from the browser
+VALID = {
+    "lang": list(LANGUAGES),
+    "sex": ["male", "female"],
+    "food": list(FOOD_FACTORS),
+    "limit_profile": ["general", "novice", "custom"],
+    "age_years": (18, 100),
+    "weight_kg": (35, 200),
+    "height_cm": (130, 220),
+    "limit_brac": (0.0, 1.5),
+    "limit_bac": (0.0, 3.0),
+    "adv_habitual_level": (0.0, 1.0),
+    "adv_carbonation_factor": (0.7, 1.5),
+    "adv_breath_temp_c": (31.0, 37.0),
+    "adv_dt_h": (0.001, 0.01),
+    "adv_vd_method": ["watson", "fixed_r"],
+    "adv_r_widmark": (0.45, 0.80),
+    "adv_ka_h": (0.1, 8.0),
+    "adv_elimination_mode": ["mm", "zero", "ke"],
+    "adv_Vmax_g_per_L_h": (0.05, 0.60),
+    "adv_Km_g_per_L": (0.02, 0.60),
+    "adv_beta_g_per_L_h": (0.05, 0.60),
+    "adv_ke_h": (0.05, 0.60),
+    "adv_BBR_base": (1500.0, 3000.0),
+    "adv_bbr_temp_coeff_per_deg": (-0.20, 0.20),
+}
+
+
+def _valid(key: str, value) -> bool:
+    rule = VALID[key]
+    if isinstance(rule, list):
+        return value in rule
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and rule[0] <= value <= rule[1]
+
+
+def _apply_saved(data: dict):
+    """Copy remembered values into the session, ignoring anything malformed."""
+    for k, v in data.items():
+        if k in VALID and _valid(k, v):
+            ss[k] = type(DEFAULTS[k])(v)
+    for k, v in (data.get("advanced") or {}).items():
+        if f"adv_{k}" in VALID and _valid(f"adv_{k}", v):
+            ss[f"adv_{k}"] = type(ADVANCED_DEFAULTS[k])(v)
+    drinks = []
+    for d in data.get("drinks") or []:
+        try:
+            if d["drink"] in DRINKS:
+                _parse_time(d["time"])
+                drinks.append({"time": d["time"], "drink": d["drink"], "ml": float(d["ml"]), "abv": float(d["abv"])})
+        except (KeyError, TypeError, ValueError):
+            continue
+    ss.drinks = drinks
+    ss.editor_ver += 1
+
+
+def _payload() -> dict:
+    data = {k: ss[k] for k in DEFAULTS}
+    if ss.limit_profile != "custom":
+        data.pop("limit_brac")
+        data.pop("limit_bac")
+    data["drinks"] = ss.drinks
+    data["advanced"] = {k: ss[f"adv_{k}"] for k, v in ADVANCED_DEFAULTS.items() if ss[f"adv_{k}"] != v}
+    return data
+
+
+_set_defaults()
+saved = storage.load(STORAGE_KEY)
+if saved:
+    _apply_saved(saved)
+if not storage.is_ready():
+    # Wait for the browser to hand over the saved data before drawing any widget;
+    # it arrives almost instantly and triggers a rerun.
+    st.stop()
+
+t = translator(ss.lang)
+
+st.set_page_config(page_title=t("page_title"), page_icon="🍺", layout="wide")
+
 st.markdown(
     """
 <style>
-.block-container {padding-top: 1.2rem; padding-bottom: 2rem;}
+.block-container {padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1100px;}
 h1, h2, h3 { font-weight: 700; }
-div[data-testid="stMetricValue"] { font-size: 1.4rem; }
+div[data-testid="stMetricValue"] { font-size: 1.5rem; }
 </style>
 """,
     unsafe_allow_html=True,
 )
 
-st.title("🍺 Interactive Alcohol Concentration Calculator (BrAC/BAC)")
-st.caption("Pharmacokinetic simulation with GI absorption → central compartment and configurable elimination.")
+def _sort_drinks():
+    if ss.drinks:
+        offs, _ = _offsets_hours([_parse_time(d["time"]) for d in ss.drinks])
+        ss.drinks = [d for _, d in sorted(zip(offs, ss.drinks), key=lambda p: p[0])]
+
 
 # =========================
-# Sidebar: Presets
+# Callbacks
 # =========================
-st.sidebar.header("⚙️ Quick presets")
-preset = st.sidebar.selectbox(
-    "Initial scenario",
-    [
-        "Liquor on empty stomach (4×40 ml)",
-        "Beer (330 ml) + meal",
-        "Wine (2×150 ml, light dinner)",
-        "Empty custom setup",
-    ],
-    index=0,
+def _editor_key() -> str:
+    return f"drinks_editor_{ss.editor_ver}"
+
+
+def add_drink(key: str):
+    now = _now()
+    now = now.replace(minute=now.minute - now.minute % 5)
+    d = DRINKS[key]
+    ss.drinks = ss.drinks + [{"time": _fmt_time(now.time()), "drink": key, "ml": float(d["ml"]), "abv": round(d["abv"] * 100, 1)}]
+    _sort_drinks()
+    ss.editor_ver += 1
+
+
+def clear_drinks():
+    ss.drinks = []
+    ss.editor_ver += 1
+
+
+def apply_editor_changes():
+    changes = ss[_editor_key()]
+    rows = [dict(d) for d in ss.drinks]
+    for idx, edit in changes.get("edited_rows", {}).items():
+        row = rows[int(idx)]
+        if "drink" in edit and edit["drink"] in DRINKS and edit["drink"] != row["drink"]:
+            row["drink"] = edit["drink"]
+            row["ml"] = float(DRINKS[edit["drink"]]["ml"])
+            row["abv"] = round(DRINKS[edit["drink"]]["abv"] * 100, 1)
+        if edit.get("time"):
+            row["time"] = _fmt_time(_parse_time(edit["time"]))
+        if edit.get("ml") is not None:
+            row["ml"] = float(edit["ml"])
+        if edit.get("abv") is not None:
+            row["abv"] = float(edit["abv"])
+    deleted = set(changes.get("deleted_rows", []))
+    rows = [r for i, r in enumerate(rows) if i not in deleted]
+    for new in changes.get("added_rows", []):
+        key = new.get("drink") if new.get("drink") in DRINKS else "cana"
+        d = DRINKS[key]
+        time_ = new.get("time") or (rows[-1]["time"] if rows else _fmt_time(_now().time()))
+        rows.append({
+            "time": _fmt_time(_parse_time(time_)),
+            "drink": key,
+            "ml": float(new.get("ml") or d["ml"]),
+            "abv": float(new.get("abv") or round(d["abv"] * 100, 1)),
+        })
+    ss.drinks = [r for r in rows if r["ml"] > 0 and 0 < r["abv"] <= 100]
+    _sort_drinks()
+    ss.editor_ver += 1
+
+
+def reset_advanced():
+    for k, v in ADVANCED_DEFAULTS.items():
+        ss[f"adv_{k}"] = v
+
+
+def forget_me():
+    _set_defaults(force=True)
+    ss.lang = _browser_lang()
+    ss.editor_ver += 1
+    ss._forget = True
+
+
+# =========================
+# Header + language
+# =========================
+head_l, head_r = st.columns([5, 1], vertical_alignment="bottom")
+with head_l:
+    st.title(t("title"))
+with head_r:
+    st.selectbox(t("language"), list(LANGUAGES), key="lang", format_func=LANGUAGES.get, label_visibility="collapsed")
+st.caption(t("subtitle"))
+
+# =========================
+# 1. About you
+# =========================
+st.subheader(t("you"))
+c1, c2, c3, c4 = st.columns(4)
+c1.selectbox(t("sex"), ["male", "female"], key="sex", format_func=lambda s: t(f"sex_{s}"))
+c2.number_input(t("age"), 18, 100, key="age_years", step=1)
+c3.number_input(t("weight"), 35, 200, key="weight_kg", step=1)
+c4.number_input(t("height"), 130, 220, key="height_cm", step=1)
+
+# =========================
+# 2. Drinks
+# =========================
+st.subheader(t("drinks"))
+st.caption(t("drinks_hint"))
+for col, key in zip(st.columns(len(QUICK_DRINKS)), QUICK_DRINKS):
+    col.button(
+        f"{DRINKS[key]['emoji']} {t(f'drink_{key}')}",
+        key=f"add_{key}",
+        help=t(f"drink_{key}_desc"),
+        on_click=add_drink,
+        args=(key,),
+        width="stretch",
+    )
+
+drinks_df = pd.DataFrame(
+    {
+        "time": pd.Series([_parse_time(d["time"]) for d in ss.drinks], dtype="object"),
+        "drink": pd.Series([d["drink"] for d in ss.drinks], dtype="object"),
+        "ml": pd.Series([d["ml"] for d in ss.drinks], dtype="float64"),
+        "abv": pd.Series([d["abv"] for d in ss.drinks], dtype="float64"),
+    }
 )
-
-# =========================
-# Main columns
-# =========================
-col_left, col_right = st.columns([1.2, 1])
-
-with col_left:
-    st.subheader("👤 Subject data")
-    c1, c2, c3, c4 = st.columns(4)
-    weight_kg = c1.number_input("Weight (kg)", 40.0, 180.0, 70.0, step=1.0)
-    height_cm = c2.number_input("Height (cm)", 140.0, 210.0, 175.0, step=1.0)
-    age_years = c3.number_input("Age (years)", 18.0, 90.0, 35.0, step=1.0)
-    sex = c4.selectbox("Sex", ["male", "female"])
-
-    c5, c6 = st.columns(2)
-    breath_temp_c = c5.slider("Exhaled air temperature (°C)", 31.0, 37.0, 34.0, 0.1)
-    habitual_level = c6.slider("Habitual consumption / tolerance (0=naïve · 1=high)", 0.0, 1.0, 0.5, 0.05)
-
-    vd_method = st.radio("Distribution volume method", ["watson", "fixed_r"], horizontal=True)
-    r_widmark = st.slider("Widmark r (L/kg) · only if 'fixed_r'", 0.45, 0.80, 0.60, 0.01)
-
-with col_right:
-    st.subheader("📏 Reference limits (editable)")
-    lim_col1, lim_col2 = st.columns(2)
-    limit_brac = lim_col1.number_input("BrAC limit (mg/L air)", 0.05, 1.50, 0.25, 0.01)
-    limit_bac = lim_col2.number_input("BAC limit (g/L blood)", 0.10, 2.00, 0.50, 0.05)
-
-    st.subheader("⏱️ Simulation time")
-    dur_col1, dur_col2 = st.columns(2)
-    duration_h = dur_col1.slider("Total duration (h)", 1.0, 24.0, 12.0, 0.5)
-    dt_h = dur_col2.select_slider("Time resolution", options=[0.01, 0.005, 0.0025, 0.001], value=0.0025)
-    st.caption("Tip: 0.0025 h ≈ 9 s per step (good precision).")
-
-# =========================
-# Advanced panel
-# =========================
-with st.expander("🧪 Advanced model parameters (absorption, elimination, BBR) and reference tables", expanded=False):
-    st.markdown("**Absorption** (first order from GI):")
-    a1, a2, a3 = st.columns(3)
-    ka_h = a1.number_input("Base ka (h⁻¹)", 0.1, 8.0, 2.4, 0.1)
-    food_factor = a2.slider("Meal factor (↓ absorption)", 0.3, 1.3, 0.8, 0.05)
-    carbonation_factor = a3.slider("Carbonation factor (↑ absorption)", 0.7, 1.5, 1.1, 0.05)
-
-    st.markdown("---")
-    st.markdown("**Elimination** (choose mode):")
-    elimination_mode = st.radio(
-        "Elimination mode",
-        ["mm", "zero", "ke"],
-        index=0,
-        help="mm=Michaelis–Menten; zero=zero order; ke=first order",
-    )
-
-    e1, e2, e3, e4 = st.columns(4)
-    Vmax_g_per_L_h = e1.number_input("Vmax (g/L·h)", 0.05, 0.60, 0.20, 0.01)
-    Km_g_per_L = e2.number_input("Km (g/L)", 0.02, 0.60, 0.15, 0.01)
-    beta_g_per_L_h = e3.number_input("β (g/L·h) (zero order)", 0.05, 0.60, 0.18, 0.01)
-    ke_h = e4.number_input("ke (h⁻¹) (first order)", 0.05, 0.60, 0.15, 0.01)
-
-    st.markdown("---")
-    st.markdown("**Blood:Breath Ratio (BBR)**:")
-    b1, b2 = st.columns(2)
-    BBR_base = b1.number_input("Base BBR", 1500.0, 3000.0, 2100.0, 50.0)
-    bbr_temp_coeff_per_deg = b2.number_input("Thermal coefficient per °C (≈ −0.065 optional)", -0.20, 0.20, 0.00, 0.005)
-
-    st.markdown("---")
-    st.markdown("**Reference tables**")
-    df_abs = pd.DataFrame(
-        {
-            "Condition": ["Fasting", "Light meal", "Heavy meal", "Highly carbonated", "Non-carbonated"],
-            "Typical ka (h⁻¹)": [3.0, 2.0, 1.2, 1.2, 1.0],
-            "Meal factor": [1.0, 0.8, 0.6, None, None],
-            "Carbonation factor": [None, None, None, 1.2, 1.0],
-        }
-    )
-    st.dataframe(df_abs, use_container_width=True)
-
-    df_elim = pd.DataFrame(
-        {
-            "Mode": ["Michaelis–Menten", "Zero order", "First order"],
-            "Key parameters": ["Vmax, Km", "β", "ke"],
-            "Notes": [
-                "Saturable; more realistic at high concentrations",
-                "Fixed elimination rate (classical clinical approximation)",
-                "Proportional to concentration; useful at low concentrations",
-            ],
-        }
-    )
-    st.dataframe(df_elim, use_container_width=True)
-
-# =========================
-# Dose presets
-# =========================
-def preset_doses(name: str):
-    if name == "Liquor on empty stomach (4×40 ml)":
-        base = [
-            {"t_ingesta_h": 0.00, "volumen_ml": 40, "tipo_bebida": "liquor", "ka_scale": 1.0},
-            {"t_ingesta_h": 0.75, "volumen_ml": 40, "tipo_bebida": "liquor", "ka_scale": 1.0},
-            {"t_ingesta_h": 1.50, "volumen_ml": 40, "tipo_bebida": "liquor", "ka_scale": 1.0},
-            {"t_ingesta_h": 2.15, "volumen_ml": 40, "tipo_bebida": "liquor", "ka_scale": 1.0},
-        ]
-        return base, dict(food_factor=0.8, carbonation_factor=1.1)
-    elif name == "Beer (330 ml) + meal":
-        base = [{"t_ingesta_h": 0.00, "volumen_ml": 330, "tipo_bebida": "beer", "ka_scale": 0.9}]
-        return base, dict(food_factor=0.7, carbonation_factor=1.2)
-    elif name == "Wine (2×150 ml, light dinner)":
-        base = [
-            {"t_ingesta_h": 0.00, "volumen_ml": 150, "tipo_bebida": "wine", "ka_scale": 1.0},
-            {"t_ingesta_h": 0.75, "volumen_ml": 150, "tipo_bebida": "wine", "ka_scale": 1.0},
-        ]
-        return base, dict(food_factor=0.8, carbonation_factor=1.0)
-    else:
-        return ([{"t_ingesta_h": 0.00, "volumen_ml": 40, "tipo_bebida": "liquor", "ka_scale": 1.0}], {})
-
-base_doses, preset_opt_overrides = preset_doses(preset)
-
-# =========================
-# Dose editor table
-# =========================
-st.subheader("🍷 Intake pattern (editable)")
-st.caption(
-    "Edit times (h), volumes, and beverage type. Add or delete rows. `tipo_bebida` must exist in the catalog: "
-    + ", ".join(f"{k} ({int(v*100)}%)" for k, v in beverages.items())
-)
-
-edited_df = st.data_editor(
-    pd.DataFrame(base_doses),
+st.data_editor(
+    drinks_df,
+    key=_editor_key(),
+    on_change=apply_editor_changes,
     num_rows="dynamic",
-    use_container_width=True,
+    hide_index=True,
+    width="stretch",
     column_config={
-        "t_ingesta_h": st.column_config.NumberColumn("t_ingesta_h (h)", step=0.05, help="Relative time from t=0"),
-        "volumen_ml": st.column_config.NumberColumn("volume (ml)", step=5),
-        "tipo_bebida": st.column_config.TextColumn("beverage_type", help="e.g., beer, wine, liquor"),
-        "ka_scale": st.column_config.NumberColumn("ka_scale", step=0.05, help="Local ka adjustment for that intake"),
+        "time": st.column_config.TimeColumn(t("col_time"), format="HH:mm", step=60, required=True),
+        "drink": st.column_config.SelectboxColumn(
+            t("col_drink"),
+            options=list(DRINKS),
+            format_func=lambda k: f"{DRINKS[k]['emoji']} {t(f'drink_{k}')}",
+            required=True,
+            default="cana",
+        ),
+        "ml": st.column_config.NumberColumn(t("col_ml"), min_value=1, max_value=3000, step=5, help=t("col_ml_help")),
+        "abv": st.column_config.NumberColumn(t("col_abv"), min_value=0.5, max_value=96, step=0.5, format="%.1f %%"),
     },
 )
+if ss.drinks:
+    st.button(t("clear_drinks"), on_click=clear_drinks, type="tertiary")
 
 # =========================
-# Model object construction
+# 3. Food
 # =========================
-if preset_opt_overrides:
-    food_factor = preset_opt_overrides.get("food_factor", food_factor)
-    carbonation_factor = preset_opt_overrides.get("carbonation_factor", carbonation_factor)
-
-subject = Subject(
-    weight_kg=weight_kg,
-    height_cm=height_cm,
-    age_years=age_years,
-    sex=sex,
-    breath_temp_c=breath_temp_c,
-    habitual_level=habitual_level,
-    vd_method=vd_method,
-    r_widmark=r_widmark,
-)
-
-options = ModelOptions(
-    ka_h=ka_h,
-    food_factor=food_factor,
-    carbonation_factor=carbonation_factor,
-    elimination_mode=elimination_mode,
-    Vmax_g_per_L_h=Vmax_g_per_L_h,
-    Km_g_per_L=Km_g_per_L,
-    beta_g_per_L_h=beta_g_per_L_h,
-    ke_h=ke_h,
-    BBR_base=BBR_base,
-    bbr_temp_coeff_per_deg=bbr_temp_coeff_per_deg,
-)
+st.subheader(t("food"))
+st.radio(t("food"), list(FOOD_FACTORS), key="food", format_func=lambda k: t(f"food_{k}"), horizontal=True, label_visibility="collapsed")
 
 # =========================
-# Prepare dose tuples for engine
+# 4. Result
 # =========================
-doses = []
-for _, row in edited_df.iterrows():
-    t_h = float(row["t_ingesta_h"])
-    vol = float(row["volumen_ml"])
-    tipo = str(row["tipo_bebida"]).strip().lower()
-    ka_scale = float(row.get("ka_scale", 1.0))
-    doses.append((t_h, vol, tipo, {"ka_scale": ka_scale}))
+st.subheader(t("results"))
+st.selectbox(t("limit"), ["general", "novice", "custom"], key="limit_profile", format_func=lambda k: t(f"limit_{k}"))
+if ss.limit_profile == "custom":
+    lc1, lc2 = st.columns(2)
+    lc1.number_input(t("limit_brac"), 0.0, 1.5, key="limit_brac", step=0.01, format="%.2f")
+    lc2.number_input(t("limit_bac"), 0.0, 3.0, key="limit_bac", step=0.05, format="%.2f")
+    limit_brac, limit_bac = ss.limit_brac, ss.limit_bac
+else:
+    limit_brac, limit_bac = LIMITS[ss.limit_profile]
 
-invalid = [d for d in doses if d[1] <= 0 or d[0] < 0 or d[2] not in beverages]
-if invalid:
-    st.error("Invalid rows in table (volume ≤ 0, time < 0 or beverage not in catalog). Correct before running simulation.")
-    st.stop()
-
-# =========================
-# Simulation
-# =========================
-times, BAC, BrAC = simulate_brac(
-    subject=subject,
-    doses=doses,
-    opts=options,
-    duration_h=duration_h,
-    dt_h=dt_h,
-)
+result_box = st.container()
 
 # =========================
-# Quick metrics
+# 5. Advanced options (hidden at the bottom)
 # =========================
-idx_max = int(np.argmax(BrAC))
-brac_max = float(BrAC[idx_max])
-tmax = float(times[idx_max])
+with st.expander(t("advanced"), expanded=False):
+    st.caption(t("advanced_intro"))
+    a1, a2 = st.columns(2)
+    a1.slider(t("tolerance"), 0.0, 1.0, key="adv_habitual_level", step=0.05, help=t("tolerance_help"))
+    a2.slider(t("carbonation"), 0.7, 1.5, key="adv_carbonation_factor", step=0.05)
+    a1.slider(t("breath_temp"), 31.0, 37.0, key="adv_breath_temp_c", step=0.1)
+    a2.slider(t("dt"), 0.001, 0.01, key="adv_dt_h", step=0.0005, format="%.4f", help=t("dt_help"))
+    a1.radio(t("vd_method"), ["watson", "fixed_r"], key="adv_vd_method", format_func=lambda k: t(f"vd_{k}"))
+    a2.slider(t("r_widmark"), 0.45, 0.80, key="adv_r_widmark", step=0.01, disabled=ss.adv_vd_method != "fixed_r")
 
-m1, m2, m3 = st.columns(3)
-m1.metric("Max BrAC (mg/L air)", f"{brac_max:.3f}", help="Peak alcohol concentration in exhaled air")
-m2.metric("t(peak) (h)", f"{tmax:.2f}")
-m3.metric("BAC at peak (g/L)", f"{float(BAC[idx_max]):.3f}")
+    st.markdown(t("absorption"))
+    st.number_input(t("ka"), 0.1, 8.0, key="adv_ka_h", step=0.1)
 
-# =========================
-# Graphs
-# =========================
-st.subheader("📈 Results")
+    st.markdown(t("elimination"))
+    st.radio(t("elim_mode"), ["mm", "zero", "ke"], key="adv_elimination_mode", format_func=lambda k: t(f"elim_{k}"), horizontal=True)
+    e1, e2, e3, e4 = st.columns(4)
+    e1.number_input(t("vmax"), 0.05, 0.60, key="adv_Vmax_g_per_L_h", step=0.01)
+    e2.number_input(t("km"), 0.02, 0.60, key="adv_Km_g_per_L", step=0.01)
+    e3.number_input(t("beta"), 0.05, 0.60, key="adv_beta_g_per_L_h", step=0.01)
+    e4.number_input(t("ke"), 0.05, 0.60, key="adv_ke_h", step=0.01)
 
-fig_brac = px.line(x=times, y=BrAC, labels={"x": "Time (h)", "y": "BrAC (mg/L air)"}, title="BrAC vs Time")
-fig_brac.add_hline(y=limit_brac, line_dash="dash", annotation_text=f"BrAC limit = {limit_brac:.2f} mg/L")
-st.plotly_chart(fig_brac, use_container_width=True, theme="streamlit")
+    st.markdown(t("bbr"))
+    b1, b2 = st.columns(2)
+    b1.number_input(t("bbr_base"), 1500.0, 3000.0, key="adv_BBR_base", step=50.0)
+    b2.number_input(t("bbr_coeff"), -0.20, 0.20, key="adv_bbr_temp_coeff_per_deg", step=0.005, format="%.3f")
 
-fig_bac = px.line(x=times, y=BAC, labels={"x": "Time (h)", "y": "BAC (g/L)"}, title="BAC vs Time")
-fig_bac.add_hline(y=limit_bac, line_dash="dash", annotation_text=f"BAC limit = {limit_bac:.2f} g/L")
-st.plotly_chart(fig_bac, use_container_width=True, theme="streamlit")
+    st.button(t("reset_advanced"), on_click=reset_advanced)
 
-# =========================
-# Data export
-# =========================
-st.subheader("💾 Export data")
-out_df = pd.DataFrame({"t_h": times, "BAC_g_per_L": BAC, "BrAC_mg_per_L": BrAC})
-csv = out_df.to_csv(index=False).encode("utf-8")
-st.download_button("Download CSV (t, BAC, BrAC)", data=csv, file_name="brac_bac_simulation.csv", mime="text/csv")
-
-# =========================
-# Help / Notes
-# =========================
-with st.expander("ℹ️ Model notes and responsible use"):
-    st.markdown(
-        """
-- The model uses **first-order absorption** from the GI tract and configurable elimination (**Michaelis–Menten**, **zero order**, or **first order**).
-- **Tolerance/habitual consumption** adjusts elimination parameters (↑Vmax/β, slight Km variation) as a practical approximation.
-- **BBR** (blood:breath ratio) default = 2100, with optional thermal correction for exhaled air.
-- Legal limits may vary by country and condition; these are **editable fields**.
-- This tool is educational and **not** a substitute for official testing or medical/legal advice.
-        """
+    st.markdown(t("drinks_table"))
+    st.dataframe(
+        pd.DataFrame(
+            {
+                t("tbl_drink"): [f"{d['emoji']} {t(f'drink_{k}')}" for k, d in DRINKS.items()],
+                t("tbl_ml"): [d["ml"] for d in DRINKS.values()],
+                t("tbl_abv"): [f"{d['abv'] * 100:g} %" for d in DRINKS.values()],
+                t("tbl_gas"): [t("yes") if d["carbonated"] else t("no") for d in DRINKS.values()],
+            }
+        ),
+        hide_index=True,
+        width="stretch",
     )
+
+with st.expander(t("notes")):
+    st.markdown(t("notes_body"))
+
+foot_l, foot_r = st.columns([3, 1], vertical_alignment="center")
+foot_l.caption(t("privacy"))
+foot_r.button(t("forget"), on_click=forget_me, type="secondary")
+
+# =========================
+# Simulation + results (rendered into the result container above)
+# =========================
+@st.cache_data(show_spinner=False, max_entries=64)
+def run_simulation(subject_kw: tuple, options_kw: tuple, doses: tuple, duration_h: float, dt_h: float):
+    times, bac, brac = simulate_brac(
+        subject=Subject(**dict(subject_kw)),
+        doses=[(t_, ml, "custom", {"abv": abv, "ka_scale": ks}) for t_, ml, abv, ks in doses],
+        opts=ModelOptions(**dict(options_kw)),
+        duration_h=duration_h,
+        dt_h=dt_h,
+    )
+    return times, bac, brac
+
+
+with result_box:
+    if not ss.drinks:
+        st.info(t("add_drinks_first"))
+    else:
+        offsets, start_time = _offsets_hours([_parse_time(d["time"]) for d in ss.drinks])
+        now = _now()
+        start_dt = dt.datetime.combine(now.date(), start_time)
+        if start_dt > now + dt.timedelta(hours=6):
+            start_dt -= dt.timedelta(days=1)
+
+        doses = tuple(
+            (off, float(d["ml"]), float(d["abv"]) / 100.0, ss.adv_carbonation_factor if DRINKS[d["drink"]]["carbonated"] else 1.0)
+            for off, d in zip(offsets, ss.drinks)
+        )
+        subject_kw = (
+            ("weight_kg", float(ss.weight_kg)),
+            ("height_cm", float(ss.height_cm)),
+            ("age_years", float(ss.age_years)),
+            ("sex", ss.sex),
+            ("breath_temp_c", ss.adv_breath_temp_c),
+            ("habitual_level", ss.adv_habitual_level),
+            ("vd_method", ss.adv_vd_method),
+            ("r_widmark", ss.adv_r_widmark),
+        )
+        options_kw = (
+            ("ka_h", ss.adv_ka_h),
+            ("food_factor", FOOD_FACTORS[ss.food]),
+            ("carbonation_factor", 1.0),  # applied per drink above
+            ("elimination_mode", ss.adv_elimination_mode),
+            ("Vmax_g_per_L_h", ss.adv_Vmax_g_per_L_h),
+            ("Km_g_per_L", ss.adv_Km_g_per_L),
+            ("beta_g_per_L_h", ss.adv_beta_g_per_L_h),
+            ("ke_h", ss.adv_ke_h),
+            ("BBR_base", ss.adv_BBR_base),
+            ("bbr_temp_coeff_per_deg", ss.adv_bbr_temp_coeff_per_deg),
+        )
+        last_dose_h = max(offsets)
+        duration_h = last_dose_h + 24.0
+        times, BAC, BrAC = run_simulation(subject_kw, options_kw, doses, duration_h, ss.adv_dt_h)
+
+        # Trim the flat tail once alcohol is gone
+        present = np.nonzero(BAC > 1e-4)[0]
+        end_idx = len(times) if len(present) == 0 else min(len(times), present[-1] + int(0.5 / ss.adv_dt_h))
+        end_idx = max(end_idx, int(np.searchsorted(times, last_dose_h + 1.0)))
+        times, BAC, BrAC = times[:end_idx], BAC[:end_idx], BrAC[:end_idx]
+        clock = [start_dt + dt.timedelta(hours=float(h)) for h in times]
+
+        idx_max = int(np.argmax(BrAC))
+        over = np.nonzero((BrAC > limit_brac) | (BAC > limit_bac))[0]
+        if len(over) == 0:
+            below_text = t("m_below_never")
+            status = ("success", t("status_never"))
+        elif over[-1] >= len(times) - 1:
+            below_text = t("m_below_later")
+            status = ("error", t("status_over", time=t("m_below_later")))
+        else:
+            below_at = clock[over[-1] + 1]
+            day = "" if below_at.date() == now.date() else f" ({below_at:%d/%m})"
+            below_text = f"{below_at:%H:%M}{day}"
+            status = ("warning", t("status_over", time=below_text))
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric(t("m_peak"), f"{BrAC[idx_max]:.2f} mg/L", help=t("m_peak_help"))
+        m2.metric(t("m_peak_time"), f"{clock[idx_max]:%H:%M}")
+        m3.metric(t("m_bac"), f"{BAC[idx_max]:.2f} g/L")
+        m4.metric(t("m_below"), below_text)
+        getattr(st, status[0])(status[1])
+
+        def _chart(y, limit, title, y_label, color):
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=clock, y=y, mode="lines", line=dict(color=color, width=3), name=y_label,
+                                     hovertemplate="%{x|%H:%M} · %{y:.3f}<extra></extra>"))
+            fig.add_hline(y=limit, line_dash="dash", line_color="#dc2626",
+                          annotation_text=t("chart_limit", v=f"{limit:.2f}"), annotation_position="top left")
+            drink_x = [start_dt + dt.timedelta(hours=off) for off in offsets]
+            fig.add_trace(go.Scatter(
+                x=drink_x, y=[0] * len(drink_x), mode="text",
+                text=[DRINKS[d["drink"]]["emoji"] for d in ss.drinks], textfont=dict(size=18),
+                hovertext=[f"{d['time']} · {t('drink_' + d['drink'])}" for d in ss.drinks], hoverinfo="text",
+                showlegend=False,
+            ))
+            if clock[0] <= now <= clock[-1]:
+                fig.add_shape(type="line", x0=now, x1=now, y0=0, y1=1, yref="paper", line=dict(color="#64748b", dash="dot"))
+                fig.add_annotation(x=now, y=1, yref="paper", text=t("chart_now"), showarrow=False, yanchor="bottom")
+            fig.update_layout(title=title, xaxis_title=t("chart_x"), yaxis_title=y_label, showlegend=False,
+                              margin=dict(l=10, r=10, t=50, b=10), height=380, hovermode="x unified")
+            fig.update_xaxes(tickformat="%H:%M")
+            fig.update_yaxes(rangemode="tozero")
+            return fig
+
+        st.plotly_chart(_chart(BrAC, limit_brac, t("chart_title"), t("chart_y"), "#0f766e"), width="stretch")
+        if st.toggle(t("show_bac"), key="show_bac"):
+            st.plotly_chart(_chart(BAC, limit_bac, t("chart_title_bac"), t("chart_y_bac"), "#7c3aed"), width="stretch")
+
+        out_df = pd.DataFrame({"time": [c.strftime("%Y-%m-%d %H:%M:%S") for c in clock], "t_h": times,
+                               "BAC_g_per_L": BAC, "BrAC_mg_per_L": BrAC})
+        st.download_button(t("export"), data=out_df.to_csv(index=False).encode("utf-8"),
+                           file_name="brac_bac_simulation.csv", mime="text/csv")
+
+# =========================
+# Remember everything in the browser
+# =========================
+if ss.pop("_forget", False):
+    storage.clear(STORAGE_KEY)
+    ss._forgotten_payload = _payload()
+    st.toast(t("forgotten"))
+elif ss.get("_forgotten_payload") == _payload():
+    pass  # nothing changed since the user asked to forget: don't save defaults again
+else:
+    ss.pop("_forgotten_payload", None)
+    storage.save(STORAGE_KEY, _payload())
