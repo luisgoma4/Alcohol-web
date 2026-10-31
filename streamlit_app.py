@@ -595,29 +595,29 @@ with tab_result:
         show_bac = ss.get("show_bac", False)
         y, y_alt = (BAC, BAC_alt) if show_bac else (BrAC, BrAC_alt)
         limit = res["limit_bac"] if show_bac else res["limit_brac"]
-        color = "#7c3aed" if show_bac else "#0d9488"
+        color = "#a78bfa" if show_bac else "#2dd4bf"
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=clock, y=y, mode="lines", line=dict(color=color, width=4), name=t("chart_all"),
-                                 fill="tozeroy", fillcolor="rgba(13,148,136,.10)" if not show_bac else "rgba(124,58,237,.10)",
+                                 fill="tozeroy", fillcolor="rgba(45,212,191,.14)" if not show_bac else "rgba(167,139,250,.14)",
                                  hovertemplate="%{x|%H:%M} · %{y:.2f}<extra></extra>"))
-        fig.add_trace(go.Scatter(x=clock, y=y_alt, mode="lines", line=dict(color="#94a3b8", width=2, dash="dash"),
+        fig.add_trace(go.Scatter(x=clock, y=y_alt, mode="lines", line=dict(color="#64748b", width=2, dash="dash"),
                                  name=t("chart_without_last"), hovertemplate="%{x|%H:%M} · %{y:.2f}<extra></extra>"))
-        fig.add_hline(y=limit, line_dash="dot", line_color="#dc2626", line_width=2,
+        fig.add_hline(y=limit, line_dash="dot", line_color="#f87171", line_width=2,
                       annotation_text=t("chart_limit", v=f"{limit:.2f}"), annotation_position="top right",
-                      annotation_font_color="#dc2626")
+                      annotation_font_color="#f87171")
         drink_x = [res["start_dt"] + dt.timedelta(hours=off) for off in res["offsets"]]
         fig.add_trace(go.Scatter(x=drink_x, y=[0] * len(drink_x), mode="text",
                                  text=[DRINKS[d["drink"]]["emoji"] for d in ss.drinks], textfont=dict(size=18),
                                  hoverinfo="skip", showlegend=False))
         if clock[0] <= now <= clock[-1]:
-            fig.add_shape(type="line", x0=now, x1=now, y0=0, y1=1, yref="paper", line=dict(color="#0f172a", dash="dot", width=1))
+            fig.add_shape(type="line", x0=now, x1=now, y0=0, y1=1, yref="paper", line=dict(color="#cbd5e1", dash="dot", width=1))
             fig.add_annotation(x=now, y=1, yref="paper", text=t("chart_now"), showarrow=False, yanchor="bottom",
-                               font=dict(size=11, color="#0f172a"))
+                               font=dict(size=11, color="#cbd5e1"))
         fig.update_layout(height=300, margin=dict(l=4, r=4, t=36, b=4), hovermode="x unified", dragmode=False,
                           paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                           legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="left", x=0, font=dict(size=11)))
         fig.update_xaxes(tickformat="%H:%M", fixedrange=True, showgrid=False)
-        fig.update_yaxes(rangemode="tozero", fixedrange=True, gridcolor="#e2e8f0",
+        fig.update_yaxes(rangemode="tozero", fixedrange=True, gridcolor="#273248",
                          title=dict(text=t("chart_y_bac") if show_bac else t("chart_y"), font=dict(size=11)))
         with st.container(key="card_chart"):
             _label(t("chart_title_bac") if show_bac else t("chart_title"))
