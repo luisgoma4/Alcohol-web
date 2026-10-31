@@ -85,11 +85,13 @@ streamlit run streamlit_app.py
 
 ### Using the web app
 
-1. **About you** – sex, age, weight and height.
-2. **What have you had?** – one tap per drink (small beer, bottle of beer, glass of wine, mixed drink, shot) adds it at the current time; edit time, drink or amount in the table.
-3. **Have you eaten?** – empty stomach / light snack / full meal.
-4. **Result** – peak breath and blood alcohol, and the time you'll be back under your limit (general or novice/professional).
+The app works like a mobile app with four full screens. Move between them with the bottom bar, by swiping, or with the **Next** button:
 
-Model parameters (absorption, elimination, BBR, tolerance, time step…) have standard values and are tucked away under **Advanced model options**, with a button to restore them.
+1. **👤 Profile** – language, sex, age, weight and height.
+2. **🍺 Drinks** – choose *now* or another time, tap a drink tile (small beer, bottle, pint, glass of wine, sparkling wine, mixed drink, shot), say whether you've eaten; edit ✏️, repeat ➕ or remove 🗑️ each drink (with undo).
+3. **📈 Forecast** – the time you'll be back under your limit, peak breath and blood alcohol, chart, and what happens if you skip the last drink.
+4. **⚙️ Advanced** – model parameters, notes and privacy.
+
+Model parameters (absorption, elimination, BBR, tolerance, time step…) have standard values and live on the **Advanced** screen, with a button to restore them. Styles are in `style.css`.
 
 The interface is available in Spanish and English. Everything the user enters is remembered **only in their browser** (`localStorage`); nothing is stored on the server. **Forget my data** erases it.

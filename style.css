@@ -1,0 +1,155 @@
+/* =========================================================
+   BrAC · "reel" app look: 4 full screens + bottom navigation
+   ========================================================= */
+:root {
+  --ink: #0f172a;
+  --muted: #64748b;
+  --line: #e2e8f0;
+  --card: #ffffff;
+  --bg: #f4f6fb;
+  --profile: #6366f1;
+  --profile-2: #8b5cf6;
+  --drinks: #f59e0b;
+  --drinks-2: #f97316;
+  --result: #0d9488;
+  --result-2: #0891b2;
+  --advanced: #475569;
+  --advanced-2: #334155;
+  --ok: #16a34a;
+  --warn: #d97706;
+  --bad: #dc2626;
+  --radius: 20px;
+}
+
+/* Page canvas: a centred phone-width column on every screen size */
+.stApp { background: var(--bg); }
+header[data-testid="stHeader"] { display: none; }
+.block-container { max-width: 560px !important; padding: .75rem 1rem 7.5rem !important; }
+h1, h2, h3, h4 { color: var(--ink); letter-spacing: -.01em; }
+
+/* ---------- Bottom navigation (the tab bar) ---------- */
+.st-key-screen [role="tablist"] {
+  position: fixed; left: 50%; transform: translateX(-50%); bottom: 0; z-index: 999990;
+  width: min(560px, 100vw); display: grid !important; grid-template-columns: repeat(4, 1fr);
+  gap: 0 !important; background: rgba(255, 255, 255, .96); backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(15, 23, 42, .08);
+  padding: .35rem .4rem calc(.45rem + env(safe-area-inset-bottom)) !important;
+}
+.st-key-screen [role="tab"] {
+  display: flex; align-items: center; cursor: pointer; border: none !important;
+  height: 58px; margin: 0 !important; padding: 0 .2rem !important; border-radius: 16px;
+  justify-content: center; background: transparent; transition: background .15s ease;
+}
+.st-key-screen [role="tab"] p {
+  font-size: .78rem !important; font-weight: 600; color: var(--muted); white-space: pre-line;
+  text-align: center; line-height: 1.15;
+}
+.st-key-screen [role="tab"] p::first-line { font-size: 1.45rem; line-height: 1.5; }
+.st-key-screen [role="tab"][aria-selected="true"] { background: #eef2ff; }
+.st-key-screen [role="tab"][aria-selected="true"] p { color: var(--ink); }
+.st-key-screen .react-aria-SelectionIndicator, .st-key-screen [role="tablist"]::after { display: none !important; }
+.st-key-screen [role="tabpanel"] { padding-top: 0 !important; }
+
+/* ---------- Screen hero (coloured header of each screen) ---------- */
+.hero {
+  border-radius: var(--radius); padding: 1.1rem 1.2rem 1.2rem; color: #fff; margin: .25rem 0 .9rem;
+  position: relative; overflow: hidden; box-shadow: 0 10px 24px rgba(15, 23, 42, .12);
+}
+.hero::after {
+  content: ""; position: absolute; right: -40px; top: -40px; width: 160px; height: 160px;
+  border-radius: 50%; background: rgba(255, 255, 255, .14);
+}
+.hero .step { font-size: .75rem; font-weight: 700; opacity: .85; letter-spacing: .08em; text-transform: uppercase; }
+.hero .emoji { font-size: 2.4rem; line-height: 1.1; margin: .35rem 0 .15rem; }
+.hero .title { font-size: 1.65rem; font-weight: 800; line-height: 1.15; }
+.hero .sub { font-size: .95rem; opacity: .92; margin-top: .3rem; }
+.hero .badge {
+  display: inline-block; margin-top: .7rem; padding: .35rem .75rem; border-radius: 999px;
+  background: rgba(255, 255, 255, .22); font-weight: 700; font-size: .9rem;
+}
+.hero-profile { background: linear-gradient(135deg, var(--profile), var(--profile-2)); }
+.hero-drinks { background: linear-gradient(135deg, var(--drinks), var(--drinks-2)); }
+.hero-result { background: linear-gradient(135deg, var(--result), var(--result-2)); }
+.hero-advanced { background: linear-gradient(135deg, var(--advanced), var(--advanced-2)); }
+.hero-ok { background: linear-gradient(135deg, #16a34a, #0d9488); }
+.hero-warn { background: linear-gradient(135deg, #f59e0b, #ea580c); }
+.hero-bad { background: linear-gradient(135deg, #dc2626, #9f1239); }
+.hero .big { font-size: 3.4rem; font-weight: 800; line-height: 1; margin: .35rem 0 .2rem; letter-spacing: -.02em; }
+
+/* ---------- Cards and section labels ---------- */
+[class*="st-key-card_"] {
+  background: var(--card); border-radius: var(--radius); padding: 1rem 1rem 1.1rem !important;
+  border: 1px solid var(--line); box-shadow: 0 2px 10px rgba(15, 23, 42, .04); margin-bottom: .2rem;
+}
+.label { font-size: .78rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 .1rem; }
+
+/* Bigger, friendlier controls */
+button { min-height: 48px; border-radius: 14px !important; }
+[data-testid="stSegmentedControl"] button, [data-testid="stButtonGroup"] button { min-height: 50px; font-weight: 600; }
+[data-testid="stButtonGroup"] { width: 100%; }
+[data-testid="stButtonGroup"] > div { width: 100%; display: flex; }
+[data-testid="stButtonGroup"] button { flex: 1 1 0; }
+[data-testid="stSlider"] [role="slider"] { width: 26px !important; height: 26px !important; }
+.stButton button[kind="primary"] { min-height: 56px; font-size: 1.05rem; font-weight: 700; }
+
+/* Profile numbers shown big above each slider */
+.value-pill { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: -.4rem; }
+.value-pill span:first-child { font-weight: 700; color: var(--ink); }
+.value-pill span:last-child { font-size: 1.5rem; font-weight: 800; color: var(--profile); }
+
+/* ---------- Drink tiles ---------- */
+.st-key-add_buttons { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: .6rem; }
+.st-key-add_buttons > div, .st-key-add_buttons .stButton { width: 100% !important; }
+.st-key-add_buttons button {
+  width: 100% !important; min-height: 104px; flex-direction: column; gap: .15rem;
+  background: #fff7ed; border: 2px solid #fed7aa; border-radius: 18px !important;
+  transition: transform .08s ease, background .15s ease;
+}
+.st-key-add_buttons button:active { transform: scale(.96); background: #ffedd5; }
+.st-key-add_buttons button [data-testid="stIconEmoji"], .st-key-add_buttons button span[aria-hidden="true"] { font-size: 2rem !important; line-height: 1.1; }
+.st-key-add_buttons button p { font-weight: 700; font-size: .95rem; line-height: 1.2; text-align: center; }
+.st-key-add_buttons button p em { display: block; font-style: normal; font-weight: 500; font-size: .8rem; color: var(--muted); }
+
+/* ---------- Drink list rows ---------- */
+[class*="st-key-drink_card_"] {
+  background: #fff; border-radius: 16px; border: 1px solid var(--line); padding: .55rem .6rem .55rem .8rem !important;
+  flex-wrap: nowrap !important;
+}
+.drink-row { display: flex; align-items: center; gap: .7rem; min-width: 0; }
+.drink-row .em { font-size: 1.7rem; width: 2.6rem; height: 2.6rem; border-radius: 12px; background: #fff7ed; display: grid; place-items: center; flex: none; }
+.drink-row .nm { font-weight: 700; color: var(--ink); line-height: 1.2; }
+.drink-row .meta { font-size: .82rem; color: var(--muted); }
+[class*="st-key-drink_card_"] button { min-height: 44px; min-width: 44px; padding: 0 .6rem; }
+
+/* ---------- Result stat tiles ---------- */
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; margin: .2rem 0 .6rem; }
+.stat { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: .75rem .85rem; }
+.stat .k { font-size: .72rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.stat .v { font-size: 1.45rem; font-weight: 800; color: var(--ink); line-height: 1.2; margin-top: .15rem; }
+.stat .d { font-size: .8rem; font-weight: 700; color: var(--ok); }
+.whatif { border-radius: var(--radius); padding: 1rem 1.1rem; background: #ecfeff; border: 2px dashed #67e8f9; margin: .4rem 0 .6rem; }
+.whatif .t { font-weight: 800; color: #155e75; font-size: 1.05rem; }
+.whatif .big { font-size: 2rem; font-weight: 800; color: var(--ink); line-height: 1.15; margin: .25rem 0; }
+.whatif .s { color: #0e7490; font-weight: 600; }
+
+/* Empty state */
+.empty { text-align: center; color: var(--muted); padding: 1.2rem .5rem; font-weight: 600; }
+.empty .em { font-size: 2.4rem; display: block; }
+
+/* Hide the swipe helper's empty frame */
+.st-key-swipe { display: none; }
+
+/* Tiles: big emoji on top of the name */
+.st-key-add_buttons button span[data-has-shortcut] { display: flex !important; flex-direction: column; align-items: center; gap: .25rem; }
+.st-key-add_buttons button [data-testid="stIconEmoji"] { font-size: 2.1rem !important; line-height: 1 !important; }
+
+/* Profile sliders: the big number above replaces the thumb value and tick labels */
+.st-key-card_profile [data-testid="stSliderThumbValue"],
+.st-key-card_profile [data-testid="stSliderTickBar"] { display: none !important; }
+
+/* Drink rows: keep text on one line, compact icon buttons */
+.drink-row > div:last-child { min-width: 0; }
+.drink-row .meta, .drink-row .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+[class*="st-key-drink_card_"] { gap: .35rem !important; }
+[class*="st-key-drink_card_"] > div:first-child { flex: 1 1 auto !important; min-width: 0 !important; }
+[class*="st-key-drink_card_"] button { min-height: 42px; min-width: 42px; padding: 0 .45rem; }

@@ -13,7 +13,7 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY alcohol_test3.py streamlit_app.py config.py i18n.py storage.py /app/
+COPY alcohol_test3.py streamlit_app.py config.py i18n.py storage.py style.css /app/
 COPY .streamlit /app/.streamlit
 COPY assets /app/assets
 
