@@ -87,7 +87,9 @@ def _set_defaults(force: bool = False):
             ss[f"adv_{k}"] = v
     if force or "drinks" not in ss:
         ss.drinks = []
-    ss.setdefault("editor_ver", 0)
+        ss.pop("_undo_drinks", None)
+    ss.setdefault("next_drink_id", 0)
+    ss.setdefault("add_when", "now")
 
 
 # Allowed values (choices or numeric ranges) for anything read back from the browser
@@ -125,6 +127,20 @@ def _valid(key: str, value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and rule[0] <= value <= rule[1]
 
 
+def _new_drink(key: str, time_text: str, ml: float | None = None, abv: float | None = None) -> dict:
+    """A drink entry with a unique id (used to key its edit widgets)."""
+    ss.next_drink_id = ss.get("next_drink_id", 0) + 1
+    d = DRINKS[key]
+    return {
+        "id": ss.next_drink_id,
+        "rev": 0,  # bumped on every edit so the edit widgets restart from the new values
+        "time": time_text,
+        "drink": key,
+        "ml": float(d["ml"] if ml is None else ml),
+        "abv": float(round(d["abv"] * 100, 1) if abv is None else abv),
+    }
+
+
 def _apply_saved(data: dict):
     """Copy remembered values into the session, ignoring anything malformed."""
     for k, v in data.items():
@@ -138,11 +154,10 @@ def _apply_saved(data: dict):
         try:
             if d["drink"] in DRINKS:
                 _parse_time(d["time"])
-                drinks.append({"time": d["time"], "drink": d["drink"], "ml": float(d["ml"]), "abv": float(d["abv"])})
+                drinks.append(_new_drink(d["drink"], d["time"], float(d["ml"]), float(d["abv"])))
         except (KeyError, TypeError, ValueError):
             continue
     ss.drinks = drinks
-    ss.editor_ver += 1
 
 
 def _payload() -> dict:
@@ -150,7 +165,7 @@ def _payload() -> dict:
     if ss.limit_profile != "custom":
         data.pop("limit_brac")
         data.pop("limit_bac")
-    data["drinks"] = ss.drinks
+    data["drinks"] = [{k: d[k] for k in ("time", "drink", "ml", "abv")} for d in ss.drinks]
     data["advanced"] = {k: ss[f"adv_{k}"] for k, v in ADVANCED_DEFAULTS.items() if ss[f"adv_{k}"] != v}
     return data
 
@@ -188,54 +203,63 @@ def _sort_drinks():
 # =========================
 # Callbacks
 # =========================
-def _editor_key() -> str:
-    return f"drinks_editor_{ss.editor_ver}"
+def _round5(value: dt.datetime) -> dt.datetime:
+    return value.replace(minute=value.minute - value.minute % 5)
 
 
-def add_drink(key: str):
-    now = _now()
-    now = now.replace(minute=now.minute - now.minute % 5)
-    d = DRINKS[key]
-    ss.drinks = ss.drinks + [{"time": _fmt_time(now.time()), "drink": key, "ml": float(d["ml"]), "abv": round(d["abv"] * 100, 1)}]
+def _add_time() -> str:
+    """Time for a new drink: now, or the time the user picked."""
+    if ss.add_when == "custom" and ss.get("add_time"):
+        return _fmt_time(_parse_time(ss.add_time))
+    return _fmt_time(_round5(_now()).time())
+
+
+def add_drink(key: str, ml: float | None = None, abv: float | None = None):
+    new = _new_drink(key, _add_time(), ml, abv)
+    ss.drinks = ss.drinks + [new]
+    ss.pop("_undo_drinks", None)
     _sort_drinks()
-    ss.editor_ver += 1
+    ss._toast = ("added", new)
+
+
+def repeat_drink(drink_id: int):
+    d = next(x for x in ss.drinks if x["id"] == drink_id)
+    add_drink(d["drink"], d["ml"], d["abv"])
+
+
+def remove_drink(drink_id: int):
+    ss._undo_drinks = list(ss.drinks)
+    ss.drinks = [d for d in ss.drinks if d["id"] != drink_id]
 
 
 def clear_drinks():
+    ss._undo_drinks = list(ss.drinks)
     ss.drinks = []
-    ss.editor_ver += 1
 
 
-def apply_editor_changes():
-    changes = ss[_editor_key()]
-    rows = [dict(d) for d in ss.drinks]
-    for idx, edit in changes.get("edited_rows", {}).items():
-        row = rows[int(idx)]
-        if "drink" in edit and edit["drink"] in DRINKS and edit["drink"] != row["drink"]:
-            row["drink"] = edit["drink"]
-            row["ml"] = float(DRINKS[edit["drink"]]["ml"])
-            row["abv"] = round(DRINKS[edit["drink"]]["abv"] * 100, 1)
-        if edit.get("time"):
-            row["time"] = _fmt_time(_parse_time(edit["time"]))
-        if edit.get("ml") is not None:
-            row["ml"] = float(edit["ml"])
-        if edit.get("abv") is not None:
-            row["abv"] = float(edit["abv"])
-    deleted = set(changes.get("deleted_rows", []))
-    rows = [r for i, r in enumerate(rows) if i not in deleted]
-    for new in changes.get("added_rows", []):
-        key = new.get("drink") if new.get("drink") in DRINKS else "cana"
-        d = DRINKS[key]
-        time_ = new.get("time") or (rows[-1]["time"] if rows else _fmt_time(_now().time()))
-        rows.append({
-            "time": _fmt_time(_parse_time(time_)),
-            "drink": key,
-            "ml": float(new.get("ml") or d["ml"]),
-            "abv": float(new.get("abv") or round(d["abv"] * 100, 1)),
-        })
-    ss.drinks = [r for r in rows if r["ml"] > 0 and 0 < r["abv"] <= 100]
+def undo_remove():
+    ss.drinks = ss.pop("_undo_drinks", ss.drinks)
+
+
+def _edit_key(d: dict, field: str) -> str:
+    return f"ed_{d['id']}_{d['rev']}_{field}"
+
+
+def edit_drink(drink_id: int, field: str):
+    for d in ss.drinks:
+        value = ss.get(_edit_key(d, field)) if d["id"] == drink_id else None
+        if value is None:
+            continue
+        d["rev"] += 1
+        if field == "drink" and value != d["drink"]:
+            # New drink type: start from its standard amount and strength
+            d.update(drink=value, ml=float(DRINKS[value]["ml"]), abv=float(round(DRINKS[value]["abv"] * 100, 1)))
+        elif field == "time":
+            d["time"] = _fmt_time(_parse_time(value))
+        elif field in ("ml", "abv"):
+            d[field] = float(value)
+    ss.drinks = list(ss.drinks)
     _sort_drinks()
-    ss.editor_ver += 1
 
 
 def reset_advanced():
@@ -246,7 +270,6 @@ def reset_advanced():
 def forget_me():
     _set_defaults(force=True)
     ss.lang = _browser_lang()
-    ss.editor_ver += 1
     ss._forget = True
 
 
@@ -274,47 +297,74 @@ c4.number_input(t("height"), 130, 220, key="height_cm", step=1)
 # 2. Drinks
 # =========================
 st.subheader(t("drinks"))
-st.caption(t("drinks_hint"))
-for col, key in zip(st.columns(len(QUICK_DRINKS)), QUICK_DRINKS):
-    col.button(
-        f"{DRINKS[key]['emoji']} {t(f'drink_{key}')}",
-        key=f"add_{key}",
-        help=t(f"drink_{key}_desc"),
-        on_click=add_drink,
-        args=(key,),
-        width="stretch",
-    )
 
-drinks_df = pd.DataFrame(
-    {
-        "time": pd.Series([_parse_time(d["time"]) for d in ss.drinks], dtype="object"),
-        "drink": pd.Series([d["drink"] for d in ss.drinks], dtype="object"),
-        "ml": pd.Series([d["ml"] for d in ss.drinks], dtype="float64"),
-        "abv": pd.Series([d["abv"] for d in ss.drinks], dtype="float64"),
-    }
-)
-st.data_editor(
-    drinks_df,
-    key=_editor_key(),
-    on_change=apply_editor_changes,
-    num_rows="dynamic",
-    hide_index=True,
-    width="stretch",
-    column_config={
-        "time": st.column_config.TimeColumn(t("col_time"), format="HH:mm", step=60, required=True),
-        "drink": st.column_config.SelectboxColumn(
-            t("col_drink"),
-            options=list(DRINKS),
-            format_func=lambda k: f"{DRINKS[k]['emoji']} {t(f'drink_{k}')}",
-            required=True,
-            default="cana",
-        ),
-        "ml": st.column_config.NumberColumn(t("col_ml"), min_value=1, max_value=3000, step=5, help=t("col_ml_help")),
-        "abv": st.column_config.NumberColumn(t("col_abv"), min_value=0.5, max_value=96, step=0.5, format="%.1f %%"),
-    },
-)
+def _grams(d: dict) -> float:
+    return d["ml"] * d["abv"] / 100.0 * 0.789
+
+
+def _drink_label(key: str) -> str:
+    return f"{DRINKS[key]['emoji']} {t(f'drink_{key}')}"
+
+
+# ---- Add a drink: pick when, then tap the drink ----
+with st.container(border=True):
+    st.markdown(f"**{t('add_title')}**")
+    when_l, when_r = st.columns([1, 1], vertical_alignment="bottom")
+    with when_l:
+        st.segmented_control(
+            t("add_when"), ["now", "custom"], key="add_when", required=True,
+            format_func=lambda k: t(f"add_when_{k}"),
+        )
+    if ss.add_when == "custom":
+        when_r.time_input(t("add_time"), value=ss.get("add_time") or _round5(_now()).time(), key="add_time", step=300)
+    st.caption(t("add_hint"))
+    with st.container(horizontal=True, gap="small"):
+        for key in QUICK_DRINKS:
+            d = DRINKS[key]
+            st.button(
+                f"{_drink_label(key)} · {d['ml']} ml",
+                key=f"add_{key}",
+                help=t(f"drink_{key}_desc"),
+                on_click=add_drink,
+                args=(key,),
+            )
+
+if "_toast" in ss:
+    _, new = ss.pop("_toast")
+    st.toast(t("added_toast", drink=_drink_label(new["drink"]), time=new["time"]), icon="✅")
+
+# ---- Your drinks: one card per drink, with change / repeat / remove ----
 if ss.drinks:
-    st.button(t("clear_drinks"), on_click=clear_drinks, type="tertiary")
+    total_g = sum(_grams(d) for d in ss.drinks)
+    st.markdown(f"**{t('your_drinks', n=len(ss.drinks), g=f'{total_g:.0f}')}**")
+    for d in ss.drinks:
+        did = d["id"]
+        with st.container(border=True, horizontal=True, vertical_alignment="center", gap="small"):
+            st.markdown(
+                f"**{d['time']}** &nbsp; {_drink_label(d['drink'])} &nbsp;·&nbsp; "
+                f"{d['ml']:g} ml · {d['abv']:g} % · ≈ {_grams(d):.0f} g",
+                width="stretch",
+            )
+            with st.popover(t("edit"), help=t("edit_help")):
+                st.selectbox(t("col_drink"), list(DRINKS), index=list(DRINKS).index(d["drink"]),
+                             key=_edit_key(d, "drink"), format_func=_drink_label,
+                             on_change=edit_drink, args=(did, "drink"))
+                st.time_input(t("col_time"), value=_parse_time(d["time"]), key=_edit_key(d, "time"), step=300,
+                              on_change=edit_drink, args=(did, "time"))
+                st.number_input(t("col_ml"), 1.0, 3000.0, value=float(d["ml"]), key=_edit_key(d, "ml"), step=5.0, format="%.0f",
+                                help=t("col_ml_help"), on_change=edit_drink, args=(did, "ml"))
+                st.number_input(t("col_abv"), 0.5, 96.0, value=float(d["abv"]), key=_edit_key(d, "abv"), step=0.5,
+                                format="%.1f", on_change=edit_drink, args=(did, "abv"))
+            st.button(t("repeat"), key=f"rep_{did}", help=t("repeat_help"), on_click=repeat_drink, args=(did,))
+            st.button("🗑️", key=f"del_{did}", help=t("remove_help"), on_click=remove_drink, args=(did,))
+else:
+    st.info(t("drinks_empty"))
+
+with st.container(horizontal=True, gap="small"):
+    if ss.get("_undo_drinks") is not None:
+        st.button(t("undo"), on_click=undo_remove, type="secondary")
+    if ss.drinks:
+        st.button(t("clear_drinks"), on_click=clear_drinks, type="tertiary")
 
 # =========================
 # 3. Food

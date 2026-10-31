@@ -45,8 +45,8 @@ DRINKS = {
     "copa":    {"emoji": "🍸", "ml": 50,  "abv": 0.40, "carbonated": True},
 }
 
-# Which drinks get a quick-add button (in order)
-QUICK_DRINKS = ["cana", "tercio", "vino", "copa", "chupito"]
+# Order of the add-drink buttons
+QUICK_DRINKS = ["cana", "tercio", "pinta", "vino", "cava", "copa", "chupito"]
 
 # Meal -> absorption factor (food slows absorption)
 FOOD_FACTORS = {"fasting": 1.0, "light": 0.8, "heavy": 0.6}
