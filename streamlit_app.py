@@ -189,6 +189,43 @@ st.markdown(
 .block-container {padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1100px;}
 h1, h2, h3 { font-weight: 700; }
 div[data-testid="stMetricValue"] { font-size: 1.5rem; }
+/* Drink buttons: an even grid that adapts to the screen */
+.st-key-add_buttons { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .5rem; }
+.st-key-add_buttons > div, .st-key-add_buttons .stButton { width: 100% !important; }
+.st-key-add_buttons button { width: 100% !important; min-height: 48px; }
+/* Sticky result bar: only on phones */
+.st-key-mobile_bar { display: none; }
+/* ---------- Phones ---------- */
+@media (max-width: 640px) {
+  .block-container { padding: .5rem .9rem 7rem; }
+  h1 { font-size: 1.6rem !important; line-height: 1.2 !important; padding-bottom: .25rem !important; }
+  h2, h3 { font-size: 1.2rem !important; padding-top: .9rem !important; }
+  h4 { font-size: 1.05rem !important; }
+  div[data-testid="stMetricValue"] { font-size: 1.2rem; }
+  div[data-testid="stMetricLabel"] p { font-size: .8rem; }
+  /* Keep these column groups side by side, two per row, instead of one per row */
+  .st-key-profile [data-testid="stHorizontalBlock"],
+  .st-key-metrics [data-testid="stHorizontalBlock"],
+  .st-key-whatif_metrics [data-testid="stHorizontalBlock"],
+  .st-key-header [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; flex-direction: row !important; gap: .6rem !important; }
+  .st-key-profile [data-testid="stColumn"],
+  .st-key-metrics [data-testid="stColumn"],
+  .st-key-whatif_metrics [data-testid="stColumn"] { min-width: calc(50% - .3rem) !important; width: calc(50% - .3rem) !important; flex: 1 1 calc(50% - .3rem) !important; }
+  .st-key-header [data-testid="stColumn"]:first-child { flex: 1 1 60% !important; min-width: 0 !important; }
+  .st-key-header [data-testid="stColumn"]:last-child { flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }
+  .st-key-add_buttons { grid-template-columns: 1fr 1fr; }
+  .st-key-add_buttons button p { font-size: .9rem; }
+  button { min-height: 44px; }
+  [class*="st-key-drink_card_"] { padding: .6rem .75rem !important; }
+  .st-key-mobile_bar {
+    display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 999990;
+    background: #ffffff; border-top: 1px solid #e2e8f0; box-shadow: 0 -6px 18px rgba(15, 23, 42, .10);
+    padding: .6rem 1rem calc(.7rem + env(safe-area-inset-bottom)) !important; height: auto !important; min-height: calc(3.1rem + env(safe-area-inset-bottom)) !important; gap: 0 !important; display: flex !important; justify-content: center !important;
+  }
+  .st-key-mobile_bar p { margin: 0 !important; font-size: .95rem; line-height: 1.35; }
+  .st-key-mobile_bar [data-testid="stMarkdownContainer"] { margin: 0 !important; }
+  .st-key-mobile_bar a { color: #0f766e; font-weight: 600; text-decoration: none; }
+}
 </style>
 """,
     unsafe_allow_html=True,
@@ -276,7 +313,8 @@ def forget_me():
 # =========================
 # Header + language
 # =========================
-head_l, head_r = st.columns([5, 1], vertical_alignment="bottom")
+with st.container(key="header"):
+    head_l, head_r = st.columns([5, 1], vertical_alignment="center")
 with head_l:
     st.title(t("title"))
 with head_r:
@@ -287,7 +325,8 @@ st.caption(t("subtitle"))
 # 1. About you
 # =========================
 st.subheader(t("you"))
-c1, c2, c3, c4 = st.columns(4)
+with st.container(key="profile"):
+    c1, c2, c3, c4 = st.columns(4)
 c1.selectbox(t("sex"), ["male", "female"], key="sex", format_func=lambda s: t(f"sex_{s}"))
 c2.number_input(t("age"), 18, 100, key="age_years", step=1)
 c3.number_input(t("weight"), 35, 200, key="weight_kg", step=1)
@@ -318,7 +357,7 @@ with st.container(border=True):
     if ss.add_when == "custom":
         when_r.time_input(t("add_time"), value=ss.get("add_time") or _round5(_now()).time(), key="add_time", step=300)
     st.caption(t("add_hint"))
-    with st.container(horizontal=True, gap="small"):
+    with st.container(key="add_buttons"):
         for key in QUICK_DRINKS:
             d = DRINKS[key]
             st.button(
@@ -339,7 +378,7 @@ if ss.drinks:
     st.markdown(f"**{t('your_drinks', n=len(ss.drinks), g=f'{total_g:.0f}')}**")
     for d in ss.drinks:
         did = d["id"]
-        with st.container(border=True, horizontal=True, vertical_alignment="center", gap="small"):
+        with st.container(border=True, horizontal=True, vertical_alignment="center", gap="small", key=f"drink_card_{did}"):
             st.markdown(
                 f"**{d['time']}** &nbsp; {_drink_label(d['drink'])} &nbsp;·&nbsp; "
                 f"{d['ml']:g} ml · {d['abv']:g} % · ≈ {_grams(d):.0f} g",
@@ -370,12 +409,13 @@ with st.container(horizontal=True, gap="small"):
 # 3. Food
 # =========================
 st.subheader(t("food"))
-st.radio(t("food"), list(FOOD_FACTORS), key="food", format_func=lambda k: t(f"food_{k}"), horizontal=True, label_visibility="collapsed")
+st.segmented_control(t("food"), list(FOOD_FACTORS), key="food", format_func=lambda k: t(f"food_{k}"),
+                     required=True, label_visibility="collapsed", width="stretch")
 
 # =========================
 # 4. Result
 # =========================
-st.subheader(t("results"))
+st.subheader(t("results"), anchor="result")
 st.selectbox(t("limit"), ["general", "novice", "custom"], key="limit_profile", format_func=lambda k: t(f"limit_{k}"))
 if ss.limit_profile == "custom":
     lc1, lc2 = st.columns(2)
@@ -454,6 +494,7 @@ def run_simulation(subject_kw: tuple, options_kw: tuple, doses: tuple, duration_
     return times, bac, brac
 
 
+ss._mobile_bar = t("bar_empty")
 with result_box:
     if not ss.drinks:
         st.info(t("add_drinks_first"))
@@ -539,12 +580,16 @@ with result_box:
             below_text = _fmt_dt(below_at)
             status = ("warning", t("status_over", time=below_text))
 
-        m1, m2, m3, m4 = st.columns(4)
+        with st.container(key="metrics"):
+            m1, m2, m3, m4 = st.columns(4)
         m1.metric(t("m_peak"), f"{BrAC[idx_max]:.2f} mg/L", help=t("m_peak_help"))
         m2.metric(t("m_peak_time"), f"{clock[idx_max]:%H:%M}")
         m3.metric(t("m_bac"), f"{BAC[idx_max]:.2f} g/L")
         m4.metric(t("m_below"), below_text)
         getattr(st, status[0])(status[1])
+        bar_icon = {"success": "✅", "warning": "⚠️", "error": "⛔"}[status[0]]
+        ss._mobile_bar = (t("bar_ok", peak=f"{BrAC[idx_max]:.2f}") if below_kind == "never"
+                          else t("bar_result", icon=bar_icon, below=below_text, peak=f"{BrAC[idx_max]:.2f}"))
 
         def _chart(y, y_alt, limit, title, y_label, color):
             fig = go.Figure()
@@ -564,16 +609,22 @@ with result_box:
             if clock[0] <= now <= clock[-1]:
                 fig.add_shape(type="line", x0=now, x1=now, y0=0, y1=1, yref="paper", line=dict(color="#64748b", dash="dot"))
                 fig.add_annotation(x=now, y=1, yref="paper", text=t("chart_now"), showarrow=False, yanchor="bottom")
-            fig.update_layout(title=title, xaxis_title=t("chart_x"), yaxis_title=y_label,
-                              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                              margin=dict(l=10, r=10, t=60, b=10), height=400, hovermode="x unified")
-            fig.update_xaxes(tickformat="%H:%M")
-            fig.update_yaxes(rangemode="tozero")
+            fig.update_layout(xaxis_title=t("chart_x"), yaxis_title=y_label,
+                              legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="left", x=0),
+                              margin=dict(l=8, r=8, t=40, b=8), height=360, hovermode="x unified", dragmode=False)
+            # Fixed axes: a finger swipe scrolls the page instead of zooming the chart
+            fig.update_xaxes(tickformat="%H:%M", fixedrange=True)
+            fig.update_yaxes(rangemode="tozero", fixedrange=True)
             return fig
 
-        st.plotly_chart(_chart(BrAC, BrAC_alt, limit_brac, t("chart_title"), t("chart_y"), "#0f766e"), width="stretch")
+        chart_cfg = {"displayModeBar": False, "scrollZoom": False, "responsive": True}
+        st.markdown(f"**{t('chart_title')}**")
+        st.plotly_chart(_chart(BrAC, BrAC_alt, limit_brac, t("chart_title"), t("chart_y"), "#0f766e"),
+                        width="stretch", config=chart_cfg)
         if st.toggle(t("show_bac"), key="show_bac"):
-            st.plotly_chart(_chart(BAC, BAC_alt, limit_bac, t("chart_title_bac"), t("chart_y_bac"), "#7c3aed"), width="stretch")
+            st.markdown(f"**{t('chart_title_bac')}**")
+            st.plotly_chart(_chart(BAC, BAC_alt, limit_bac, t("chart_title_bac"), t("chart_y_bac"), "#7c3aed"),
+                            width="stretch", config=chart_cfg)
 
         # ---- What if you skip the last drink? ----
         last = ss.drinks[skip_idx]
@@ -589,7 +640,8 @@ with result_box:
                 alt_below = t("m_below_later")
             else:
                 alt_below = _fmt_dt(alt_at)
-            w1, w2, w3 = st.columns(3)
+            with st.container(key="whatif_metrics"):
+                w1, w2, w3 = st.columns(3)
             w1.metric(t("m_peak"), f"{BrAC_alt[alt_idx]:.2f} mg/L",
                       delta=f"{BrAC_alt[alt_idx] - BrAC[idx_max]:+.2f} mg/L", delta_color="inverse")
             w2.metric(t("m_bac"), f"{BAC_alt[alt_idx]:.2f} g/L",
@@ -611,6 +663,10 @@ with result_box:
                                "BAC_without_last_g_per_L": BAC_alt, "BrAC_without_last_mg_per_L": BrAC_alt})
         st.download_button(t("export"), data=out_df.to_csv(index=False).encode("utf-8"),
                            file_name="brac_bac_simulation.csv", mime="text/csv")
+
+# Sticky summary bar at the bottom of the screen (phones only, via CSS)
+with st.container(key="mobile_bar"):
+    st.markdown(ss._mobile_bar)
 
 # =========================
 # Remember everything in the browser
