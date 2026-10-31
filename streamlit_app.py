@@ -1,4 +1,6 @@
 import datetime as dt
+from html import escape
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -181,55 +183,8 @@ if not storage.is_ready():
 
 t = translator(ss.lang)
 
-st.set_page_config(page_title=t("page_title"), page_icon="🍺", layout="wide")
+st.set_page_config(page_title=t("page_title"), page_icon="🍺", layout="centered", initial_sidebar_state="collapsed")
 
-st.markdown(
-    """
-<style>
-.block-container {padding-top: 1.2rem; padding-bottom: 2rem; max-width: 1100px;}
-h1, h2, h3 { font-weight: 700; }
-div[data-testid="stMetricValue"] { font-size: 1.5rem; }
-/* Drink buttons: an even grid that adapts to the screen */
-.st-key-add_buttons { display: grid !important; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .5rem; }
-.st-key-add_buttons > div, .st-key-add_buttons .stButton { width: 100% !important; }
-.st-key-add_buttons button { width: 100% !important; min-height: 48px; }
-/* Sticky result bar: only on phones */
-.st-key-mobile_bar { display: none; }
-/* ---------- Phones ---------- */
-@media (max-width: 640px) {
-  .block-container { padding: .5rem .9rem 7rem; }
-  h1 { font-size: 1.6rem !important; line-height: 1.2 !important; padding-bottom: .25rem !important; }
-  h2, h3 { font-size: 1.2rem !important; padding-top: .9rem !important; }
-  h4 { font-size: 1.05rem !important; }
-  div[data-testid="stMetricValue"] { font-size: 1.2rem; }
-  div[data-testid="stMetricLabel"] p { font-size: .8rem; }
-  /* Keep these column groups side by side, two per row, instead of one per row */
-  .st-key-profile [data-testid="stHorizontalBlock"],
-  .st-key-metrics [data-testid="stHorizontalBlock"],
-  .st-key-whatif_metrics [data-testid="stHorizontalBlock"],
-  .st-key-header [data-testid="stHorizontalBlock"] { flex-wrap: wrap !important; flex-direction: row !important; gap: .6rem !important; }
-  .st-key-profile [data-testid="stColumn"],
-  .st-key-metrics [data-testid="stColumn"],
-  .st-key-whatif_metrics [data-testid="stColumn"] { min-width: calc(50% - .3rem) !important; width: calc(50% - .3rem) !important; flex: 1 1 calc(50% - .3rem) !important; }
-  .st-key-header [data-testid="stColumn"]:first-child { flex: 1 1 60% !important; min-width: 0 !important; }
-  .st-key-header [data-testid="stColumn"]:last-child { flex: 0 0 auto !important; width: auto !important; min-width: 0 !important; }
-  .st-key-add_buttons { grid-template-columns: 1fr 1fr; }
-  .st-key-add_buttons button p { font-size: .9rem; }
-  button { min-height: 44px; }
-  [class*="st-key-drink_card_"] { padding: .6rem .75rem !important; }
-  .st-key-mobile_bar {
-    display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 999990;
-    background: #ffffff; border-top: 1px solid #e2e8f0; box-shadow: 0 -6px 18px rgba(15, 23, 42, .10);
-    padding: .6rem 1rem calc(.7rem + env(safe-area-inset-bottom)) !important; height: auto !important; min-height: calc(3.1rem + env(safe-area-inset-bottom)) !important; gap: 0 !important; display: flex !important; justify-content: center !important;
-  }
-  .st-key-mobile_bar p { margin: 0 !important; font-size: .95rem; line-height: 1.35; }
-  .st-key-mobile_bar [data-testid="stMarkdownContainer"] { margin: 0 !important; }
-  .st-key-mobile_bar a { color: #0f766e; font-weight: 600; text-decoration: none; }
-}
-</style>
-""",
-    unsafe_allow_html=True,
-)
 
 def _sort_drinks():
     if ss.drinks:
@@ -311,176 +266,98 @@ def forget_me():
 
 
 # =========================
-# Header + language
+# Screens ("reel"): profile · drinks · prediction · advanced
 # =========================
-with st.container(key="header"):
-    head_l, head_r = st.columns([5, 1], vertical_alignment="center")
-with head_l:
-    st.title(t("title"))
-with head_r:
-    st.selectbox(t("language"), list(LANGUAGES), key="lang", format_func=LANGUAGES.get, label_visibility="collapsed")
-st.caption(t("subtitle"))
+SCREENS = ["profile", "drinks", "result", "advanced"]
 
-# =========================
-# 1. About you
-# =========================
-st.subheader(t("you"))
-with st.container(key="profile"):
-    c1, c2, c3, c4 = st.columns(4)
-c1.selectbox(t("sex"), ["male", "female"], key="sex", format_func=lambda s: t(f"sex_{s}"))
-c2.number_input(t("age"), 18, 100, key="age_years", step=1)
-c3.number_input(t("weight"), 35, 200, key="weight_kg", step=1)
-c4.number_input(t("height"), 130, 220, key="height_cm", step=1)
 
-# =========================
-# 2. Drinks
-# =========================
-st.subheader(t("drinks"))
+def _screen_labels(lang: str) -> list[str]:
+    tr = translator(lang)
+    return [tr(f"nav_{k}") for k in SCREENS]
+
+
+def _on_screen_change():
+    labels = _screen_labels(ss.lang)
+    if ss.get("screen") in labels:
+        ss.screen_idx = labels.index(ss.screen)
+
+
+def go_to(idx: int):
+    ss.screen_idx = idx
+    ss.screen = _screen_labels(ss.lang)[idx]
+
+
+def _on_lang_change():
+    ss.screen = _screen_labels(ss.lang)[ss.get("screen_idx", 0)]
+
 
 def _grams(d: dict) -> float:
     return d["ml"] * d["abv"] / 100.0 * 0.789
 
 
+def _drink_name(key: str) -> str:
+    return t(f"drink_{key}")
+
+
 def _drink_label(key: str) -> str:
-    return f"{DRINKS[key]['emoji']} {t(f'drink_{key}')}"
+    return f"{DRINKS[key]['emoji']} {_drink_name(key)}"
 
 
-# ---- Add a drink: pick when, then tap the drink ----
-with st.container(border=True):
-    st.markdown(f"**{t('add_title')}**")
-    when_l, when_r = st.columns([1, 1], vertical_alignment="bottom")
-    with when_l:
-        st.segmented_control(
-            t("add_when"), ["now", "custom"], key="add_when", required=True,
-            format_func=lambda k: t(f"add_when_{k}"),
-        )
-    if ss.add_when == "custom":
-        when_r.time_input(t("add_time"), value=ss.get("add_time") or _round5(_now()).time(), key="add_time", step=300)
-    st.caption(t("add_hint"))
-    with st.container(key="add_buttons"):
-        for key in QUICK_DRINKS:
-            d = DRINKS[key]
-            st.button(
-                f"{_drink_label(key)} · {d['ml']} ml",
-                key=f"add_{key}",
-                help=t(f"drink_{key}_desc"),
-                on_click=add_drink,
-                args=(key,),
-            )
-
-if "_toast" in ss:
-    _, new = ss.pop("_toast")
-    st.toast(t("added_toast", drink=_drink_label(new["drink"]), time=new["time"]), icon="✅")
-
-# ---- Your drinks: one card per drink, with change / repeat / remove ----
-if ss.drinks:
-    total_g = sum(_grams(d) for d in ss.drinks)
-    st.markdown(f"**{t('your_drinks', n=len(ss.drinks), g=f'{total_g:.0f}')}**")
-    for d in ss.drinks:
-        did = d["id"]
-        with st.container(border=True, horizontal=True, vertical_alignment="center", gap="small", key=f"drink_card_{did}"):
-            st.markdown(
-                f"**{d['time']}** &nbsp; {_drink_label(d['drink'])} &nbsp;·&nbsp; "
-                f"{d['ml']:g} ml · {d['abv']:g} % · ≈ {_grams(d):.0f} g",
-                width="stretch",
-            )
-            with st.popover(t("edit"), help=t("edit_help")):
-                st.selectbox(t("col_drink"), list(DRINKS), index=list(DRINKS).index(d["drink"]),
-                             key=_edit_key(d, "drink"), format_func=_drink_label,
-                             on_change=edit_drink, args=(did, "drink"))
-                st.time_input(t("col_time"), value=_parse_time(d["time"]), key=_edit_key(d, "time"), step=300,
-                              on_change=edit_drink, args=(did, "time"))
-                st.number_input(t("col_ml"), 1.0, 3000.0, value=float(d["ml"]), key=_edit_key(d, "ml"), step=5.0, format="%.0f",
-                                help=t("col_ml_help"), on_change=edit_drink, args=(did, "ml"))
-                st.number_input(t("col_abv"), 0.5, 96.0, value=float(d["abv"]), key=_edit_key(d, "abv"), step=0.5,
-                                format="%.1f", on_change=edit_drink, args=(did, "abv"))
-            st.button(t("repeat"), key=f"rep_{did}", help=t("repeat_help"), on_click=repeat_drink, args=(did,))
-            st.button("🗑️", key=f"del_{did}", help=t("remove_help"), on_click=remove_drink, args=(did,))
-else:
-    st.info(t("drinks_empty"))
-
-with st.container(horizontal=True, gap="small"):
-    if ss.get("_undo_drinks") is not None:
-        st.button(t("undo"), on_click=undo_remove, type="secondary")
-    if ss.drinks:
-        st.button(t("clear_drinks"), on_click=clear_drinks, type="tertiary")
-
-# =========================
-# 3. Food
-# =========================
-st.subheader(t("food"))
-st.segmented_control(t("food"), list(FOOD_FACTORS), key="food", format_func=lambda k: t(f"food_{k}"),
-                     required=True, label_visibility="collapsed", width="stretch")
-
-# =========================
-# 4. Result
-# =========================
-st.subheader(t("results"), anchor="result")
-st.selectbox(t("limit"), ["general", "novice", "custom"], key="limit_profile", format_func=lambda k: t(f"limit_{k}"))
-if ss.limit_profile == "custom":
-    lc1, lc2 = st.columns(2)
-    lc1.number_input(t("limit_brac"), 0.0, 1.5, key="limit_brac", step=0.01, format="%.2f")
-    lc2.number_input(t("limit_bac"), 0.0, 3.0, key="limit_bac", step=0.05, format="%.2f")
-    limit_brac, limit_bac = ss.limit_brac, ss.limit_bac
-else:
-    limit_brac, limit_bac = LIMITS[ss.limit_profile]
-
-result_box = st.container()
-
-# =========================
-# 5. Advanced options (hidden at the bottom)
-# =========================
-with st.expander(t("advanced"), expanded=False):
-    st.caption(t("advanced_intro"))
-    a1, a2 = st.columns(2)
-    a1.slider(t("tolerance"), 0.0, 1.0, key="adv_habitual_level", step=0.05, help=t("tolerance_help"))
-    a2.slider(t("carbonation"), 0.7, 1.5, key="adv_carbonation_factor", step=0.05)
-    a1.slider(t("breath_temp"), 31.0, 37.0, key="adv_breath_temp_c", step=0.1)
-    a2.slider(t("dt"), 0.001, 0.01, key="adv_dt_h", step=0.0005, format="%.4f", help=t("dt_help"))
-    a1.radio(t("vd_method"), ["watson", "fixed_r"], key="adv_vd_method", format_func=lambda k: t(f"vd_{k}"))
-    a2.slider(t("r_widmark"), 0.45, 0.80, key="adv_r_widmark", step=0.01, disabled=ss.adv_vd_method != "fixed_r")
-
-    st.markdown(t("absorption"))
-    st.number_input(t("ka"), 0.1, 8.0, key="adv_ka_h", step=0.1)
-
-    st.markdown(t("elimination"))
-    st.radio(t("elim_mode"), ["mm", "zero", "ke"], key="adv_elimination_mode", format_func=lambda k: t(f"elim_{k}"), horizontal=True)
-    e1, e2, e3, e4 = st.columns(4)
-    e1.number_input(t("vmax"), 0.05, 0.60, key="adv_Vmax_g_per_L_h", step=0.01)
-    e2.number_input(t("km"), 0.02, 0.60, key="adv_Km_g_per_L", step=0.01)
-    e3.number_input(t("beta"), 0.05, 0.60, key="adv_beta_g_per_L_h", step=0.01)
-    e4.number_input(t("ke"), 0.05, 0.60, key="adv_ke_h", step=0.01)
-
-    st.markdown(t("bbr"))
-    b1, b2 = st.columns(2)
-    b1.number_input(t("bbr_base"), 1500.0, 3000.0, key="adv_BBR_base", step=50.0)
-    b2.number_input(t("bbr_coeff"), -0.20, 0.20, key="adv_bbr_temp_coeff_per_deg", step=0.005, format="%.3f")
-
-    st.button(t("reset_advanced"), on_click=reset_advanced)
-
-    st.markdown(t("drinks_table"))
-    st.dataframe(
-        pd.DataFrame(
-            {
-                t("tbl_drink"): [f"{d['emoji']} {t(f'drink_{k}')}" for k, d in DRINKS.items()],
-                t("tbl_ml"): [d["ml"] for d in DRINKS.values()],
-                t("tbl_abv"): [f"{d['abv'] * 100:g} %" for d in DRINKS.values()],
-                t("tbl_gas"): [t("yes") if d["carbonated"] else t("no") for d in DRINKS.values()],
-            }
-        ),
-        hide_index=True,
-        width="stretch",
+def _hero(kind: str, step: int, emoji: str, title: str, sub: str = "", badge: str = "", big: str = ""):
+    st.html(
+        f'<div class="hero hero-{kind}">'
+        f'<div class="step">{step} / 4</div>'
+        f'<div class="emoji">{emoji}</div>'
+        f'<div class="title">{escape(title)}</div>'
+        + (f'<div class="big">{escape(big)}</div>' if big else "")
+        + (f'<div class="sub">{escape(sub)}</div>' if sub else "")
+        + (f'<div class="badge">{escape(badge)}</div>' if badge else "")
+        + "</div>"
     )
 
-with st.expander(t("notes")):
-    st.markdown(t("notes_body"))
 
-foot_l, foot_r = st.columns([3, 1], vertical_alignment="center")
-foot_l.caption(t("privacy"))
-foot_r.button(t("forget"), on_click=forget_me, type="secondary")
+def _label(text: str):
+    st.html(f'<div class="label">{escape(text)}</div>')
+
+
+def _next_button(idx: int):
+    st.button(t("next", screen=_screen_labels(ss.lang)[idx].replace("\n", " ")), type="primary",
+              width="stretch", on_click=go_to, args=(idx,), key=f"next_{idx}")
+
+
+# Swipe left/right between screens on touch devices (plus scroll to top on change)
+_SWIPE_JS = """
+export default function () {
+  if (window.__bracSwipe) return;
+  window.__bracSwipe = true;
+  const toTop = () => {
+    window.scrollTo({ top: 0 });
+    document.querySelector('[data-testid="stMain"]')?.scrollTo({ top: 0 });
+  };
+  let x0 = null, y0 = null, skip = false;
+  document.addEventListener('touchstart', (e) => {
+    const p = e.touches[0]; x0 = p.clientX; y0 = p.clientY;
+    skip = !!e.target.closest('[data-baseweb="slider"], input, textarea, [data-baseweb="popover"], .js-plotly-plot, [data-testid="stDataFrame"]');
+  }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    if (x0 === null || skip) { x0 = null; return; }
+    const p = e.changedTouches[0]; const dx = p.clientX - x0, dy = p.clientY - y0; x0 = null;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.6) return;
+    const tabs = [...document.querySelectorAll('.st-key-screen [role="tab"]')];
+    const i = tabs.findIndex((b) => b.getAttribute('aria-selected') === 'true');
+    const j = dx < 0 ? i + 1 : i - 1;
+    if (j >= 0 && j < tabs.length) { tabs[j].click(); toTop(); }
+  }, { passive: true });
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[role="tab"]') || e.target.closest('[class*="st-key-next_"]')) setTimeout(toTop, 50);
+  });
+}
+"""
+_swipe = st.components.v2.component("brac_swipe", js=_SWIPE_JS, isolate_styles=False)
+
 
 # =========================
-# Simulation + results (rendered into the result container above)
+# Simulation (runs before drawing so every screen can show the result)
 # =========================
 @st.cache_data(show_spinner=False, max_entries=64)
 def run_simulation(subject_kw: tuple, options_kw: tuple, doses: tuple, duration_h: float, dt_h: float):
@@ -494,179 +371,338 @@ def run_simulation(subject_kw: tuple, options_kw: tuple, doses: tuple, duration_
     return times, bac, brac
 
 
-ss._mobile_bar = t("bar_empty")
-with result_box:
+def _limits() -> tuple[float, float]:
+    if ss.limit_profile == "custom":
+        return float(ss.limit_brac), float(ss.limit_bac)
+    return LIMITS[ss.limit_profile]
+
+
+def compute_result() -> dict | None:
     if not ss.drinks:
-        st.info(t("add_drinks_first"))
+        return None
+    limit_brac, limit_bac = _limits()
+    offsets, start_time = _offsets_hours([_parse_time(d["time"]) for d in ss.drinks])
+    now = _now()
+    start_dt = dt.datetime.combine(now.date(), start_time)
+    if start_dt > now + dt.timedelta(hours=6):
+        start_dt -= dt.timedelta(days=1)
+
+    doses = tuple(
+        (off, float(d["ml"]), float(d["abv"]) / 100.0, ss.adv_carbonation_factor if DRINKS[d["drink"]]["carbonated"] else 1.0)
+        for off, d in zip(offsets, ss.drinks)
+    )
+    subject_kw = (
+        ("weight_kg", float(ss.weight_kg)),
+        ("height_cm", float(ss.height_cm)),
+        ("age_years", float(ss.age_years)),
+        ("sex", ss.sex),
+        ("breath_temp_c", ss.adv_breath_temp_c),
+        ("habitual_level", ss.adv_habitual_level),
+        ("vd_method", ss.adv_vd_method),
+        ("r_widmark", ss.adv_r_widmark),
+    )
+    options_kw = (
+        ("ka_h", ss.adv_ka_h),
+        ("food_factor", FOOD_FACTORS[ss.food]),
+        ("carbonation_factor", 1.0),  # applied per drink above
+        ("elimination_mode", ss.adv_elimination_mode),
+        ("Vmax_g_per_L_h", ss.adv_Vmax_g_per_L_h),
+        ("Km_g_per_L", ss.adv_Km_g_per_L),
+        ("beta_g_per_L_h", ss.adv_beta_g_per_L_h),
+        ("ke_h", ss.adv_ke_h),
+        ("BBR_base", ss.adv_BBR_base),
+        ("bbr_temp_coeff_per_deg", ss.adv_bbr_temp_coeff_per_deg),
+    )
+    last_dose_h = max(offsets)
+    duration_h = last_dose_h + 24.0
+    times, BAC, BrAC = run_simulation(subject_kw, options_kw, doses, duration_h, ss.adv_dt_h)
+
+    # Trim the flat tail once alcohol is gone
+    present = np.nonzero(BAC > 1e-4)[0]
+    end_idx = len(times) if len(present) == 0 else min(len(times), present[-1] + int(0.5 / ss.adv_dt_h))
+    end_idx = max(end_idx, int(np.searchsorted(times, last_dose_h + 1.0)))
+    times, BAC, BrAC = times[:end_idx], BAC[:end_idx], BrAC[:end_idx]
+    clock = [start_dt + dt.timedelta(hours=float(h)) for h in times]
+
+    # Same night without the last drink (latest by time; drinks are kept sorted)
+    if len(doses) > 1:
+        _, BAC_alt, BrAC_alt = run_simulation(subject_kw, options_kw, doses[:-1], duration_h, ss.adv_dt_h)
+        BAC_alt, BrAC_alt = BAC_alt[:end_idx], BrAC_alt[:end_idx]
     else:
-        offsets, start_time = _offsets_hours([_parse_time(d["time"]) for d in ss.drinks])
-        now = _now()
-        start_dt = dt.datetime.combine(now.date(), start_time)
-        if start_dt > now + dt.timedelta(hours=6):
-            start_dt -= dt.timedelta(days=1)
+        BAC_alt, BrAC_alt = np.zeros_like(BAC), np.zeros_like(BrAC)
 
-        doses = tuple(
-            (off, float(d["ml"]), float(d["abv"]) / 100.0, ss.adv_carbonation_factor if DRINKS[d["drink"]]["carbonated"] else 1.0)
-            for off, d in zip(offsets, ss.drinks)
-        )
-        subject_kw = (
-            ("weight_kg", float(ss.weight_kg)),
-            ("height_cm", float(ss.height_cm)),
-            ("age_years", float(ss.age_years)),
-            ("sex", ss.sex),
-            ("breath_temp_c", ss.adv_breath_temp_c),
-            ("habitual_level", ss.adv_habitual_level),
-            ("vd_method", ss.adv_vd_method),
-            ("r_widmark", ss.adv_r_widmark),
-        )
-        options_kw = (
-            ("ka_h", ss.adv_ka_h),
-            ("food_factor", FOOD_FACTORS[ss.food]),
-            ("carbonation_factor", 1.0),  # applied per drink above
-            ("elimination_mode", ss.adv_elimination_mode),
-            ("Vmax_g_per_L_h", ss.adv_Vmax_g_per_L_h),
-            ("Km_g_per_L", ss.adv_Km_g_per_L),
-            ("beta_g_per_L_h", ss.adv_beta_g_per_L_h),
-            ("ke_h", ss.adv_ke_h),
-            ("BBR_base", ss.adv_BBR_base),
-            ("bbr_temp_coeff_per_deg", ss.adv_bbr_temp_coeff_per_deg),
-        )
-        last_dose_h = max(offsets)
-        duration_h = last_dose_h + 24.0
-        times, BAC, BrAC = run_simulation(subject_kw, options_kw, doses, duration_h, ss.adv_dt_h)
+    def summary(brac, bac):
+        idx = int(np.argmax(brac))
+        over = np.nonzero((brac > limit_brac) | (bac > limit_bac))[0]
+        if len(over) == 0:
+            return {"idx": idx, "kind": "never", "at": None}
+        if over[-1] >= len(times) - 1:
+            return {"idx": idx, "kind": "later", "at": None}
+        return {"idx": idx, "kind": "at", "at": clock[over[-1] + 1]}
 
-        # Trim the flat tail once alcohol is gone
-        present = np.nonzero(BAC > 1e-4)[0]
-        end_idx = len(times) if len(present) == 0 else min(len(times), present[-1] + int(0.5 / ss.adv_dt_h))
-        end_idx = max(end_idx, int(np.searchsorted(times, last_dose_h + 1.0)))
-        times, BAC, BrAC = times[:end_idx], BAC[:end_idx], BrAC[:end_idx]
-        clock = [start_dt + dt.timedelta(hours=float(h)) for h in times]
+    return {
+        "now": now, "start_dt": start_dt, "offsets": offsets, "times": times, "clock": clock,
+        "BAC": BAC, "BrAC": BrAC, "BAC_alt": BAC_alt, "BrAC_alt": BrAC_alt,
+        "main": summary(BrAC, BAC), "alt": summary(BrAC_alt, BAC_alt),
+        "limit_brac": limit_brac, "limit_bac": limit_bac,
+    }
 
-        # Same night without the last drink (latest by time; drinks are kept sorted)
-        skip_idx = len(ss.drinks) - 1
-        if len(doses) > 1:
-            _, BAC_alt, BrAC_alt = run_simulation(subject_kw, options_kw, doses[:skip_idx], duration_h, ss.adv_dt_h)
-            BAC_alt, BrAC_alt = BAC_alt[:end_idx], BrAC_alt[:end_idx]
+
+def _fmt_dt(value: dt.datetime, now: dt.datetime) -> str:
+    day = "" if value.date() == now.date() else f" ({value:%d/%m})"
+    return f"{value:%H:%M}{day}"
+
+
+def _fmt_span(delta: dt.timedelta) -> str:
+    mins = int(round(delta.total_seconds() / 60))
+    h, m = divmod(mins, 60)
+    return f"{h} h {m:02d} min" if h else f"{m} min"
+
+
+def _below_text(s: dict, now: dt.datetime) -> str:
+    if s["kind"] == "never":
+        return t("m_below_never")
+    if s["kind"] == "later":
+        return t("m_below_later")
+    return _fmt_dt(s["at"], now)
+
+
+res = compute_result()
+
+# =========================
+# Layout
+# =========================
+with open(Path(__file__).with_name("style.css"), encoding="utf-8") as fh:
+    st.html(f"<style>{fh.read()}</style>")
+with st.container(key="swipe"):
+    _swipe(key="swipe_js", height=0)
+
+ss.setdefault("screen_idx", 0)
+labels = _screen_labels(ss.lang)
+tab_profile, tab_drinks, tab_result, tab_adv = st.tabs(
+    labels, key="screen", default=labels[ss.screen_idx], on_change=_on_screen_change
+)
+
+if "_toast" in ss:
+    _, new = ss.pop("_toast")
+    st.toast(t("added_toast", drink=_drink_label(new["drink"]), time=new["time"]), icon="✅")
+
+# ---------- 1 · Profile ----------
+with tab_profile:
+    _hero("profile", 1, "👤", t("profile_title"), t("profile_sub"))
+    with st.container(key="card_lang"):
+        _label(t("language"))
+        st.segmented_control(t("language"), list(LANGUAGES), key="lang", format_func=LANGUAGES.get, required=True,
+                             label_visibility="collapsed", width="stretch", on_change=_on_lang_change)
+    with st.container(key="card_profile"):
+        _label(t("sex"))
+        st.segmented_control(t("sex"), ["male", "female"], key="sex", format_func=lambda s: t(f"sex_{s}"),
+                             required=True, label_visibility="collapsed", width="stretch")
+        for key, lo, hi, unit in (("age_years", 18, 100, t("unit_years")), ("weight_kg", 35, 200, "kg"), ("height_cm", 130, 220, "cm")):
+            st.html(f'<div class="value-pill"><span>{escape(t(key))}</span><span>{ss[key]} {unit}</span></div>')
+            st.slider(t(key), lo, hi, key=key, step=1, label_visibility="collapsed")
+    _next_button(1)
+
+# ---------- 2 · Drinks ----------
+with tab_drinks:
+    if res is None:
+        badge = t("badge_empty")
+    elif res["main"]["kind"] == "never":
+        badge = t("badge_ok")
+    else:
+        badge = t("badge_over", time=_below_text(res["main"], res["now"]))
+    _hero("drinks", 2, "🍺", t("drinks_title"), badge=badge)
+
+    with st.container(key="card_add"):
+        _label(t("add_when"))
+        st.segmented_control(t("add_when"), ["now", "custom"], key="add_when", required=True,
+                             format_func=lambda k: t(f"add_when_{k}"), label_visibility="collapsed", width="stretch")
+        if ss.add_when == "custom":
+            st.time_input(t("add_time"), value=ss.get("add_time") or _round5(_now()).time(), key="add_time", step=300,
+                          label_visibility="collapsed")
+        _label(t("add_tap"))
+        with st.container(key="add_buttons"):
+            for key in QUICK_DRINKS:
+                d = DRINKS[key]
+                st.button(f"{_drink_name(key)} *{d['ml']} ml*", icon=d["emoji"], key=f"add_{key}",
+                          on_click=add_drink, args=(key,))
+
+    with st.container(key="card_food"):
+        _label(t("food"))
+        st.segmented_control(t("food"), list(FOOD_FACTORS), key="food", format_func=lambda k: t(f"food_{k}"),
+                             required=True, label_visibility="collapsed", width="stretch")
+
+    with st.container(key="card_list"):
+        if ss.drinks:
+            total_g = sum(_grams(d) for d in ss.drinks)
+            _label(t("your_drinks", n=len(ss.drinks), g=f"{total_g:.0f}"))
+            for d in ss.drinks:
+                did = d["id"]
+                with st.container(horizontal=True, vertical_alignment="center", gap="small", key=f"drink_card_{did}"):
+                    st.html(
+                        f'<div class="drink-row"><div class="em">{DRINKS[d["drink"]]["emoji"]}</div><div>'
+                        f'<div class="nm">{escape(_drink_name(d["drink"]))}</div>'
+                        f'<div class="meta">{d["time"]} · {d["ml"]:g} ml</div></div></div>',
+                        width="stretch",
+                    )
+                    with st.popover("✏️", help=t("edit_help")):
+                        st.selectbox(t("col_drink"), list(DRINKS), index=list(DRINKS).index(d["drink"]),
+                                     key=_edit_key(d, "drink"), format_func=_drink_label,
+                                     on_change=edit_drink, args=(did, "drink"))
+                        st.time_input(t("col_time"), value=_parse_time(d["time"]), key=_edit_key(d, "time"), step=300,
+                                      on_change=edit_drink, args=(did, "time"))
+                        st.number_input(t("col_ml"), 1.0, 3000.0, value=float(d["ml"]), key=_edit_key(d, "ml"), step=5.0,
+                                        format="%.0f", help=t("col_ml_help"), on_change=edit_drink, args=(did, "ml"))
+                        st.number_input(t("col_abv"), 0.5, 96.0, value=float(d["abv"]), key=_edit_key(d, "abv"), step=0.5,
+                                        format="%.1f", on_change=edit_drink, args=(did, "abv"))
+                    st.button("➕", key=f"rep_{did}", help=t("repeat_help"), on_click=repeat_drink, args=(did,))
+                    st.button("🗑️", key=f"del_{did}", help=t("remove_help"), on_click=remove_drink, args=(did,))
         else:
-            BAC_alt, BrAC_alt = np.zeros_like(BAC), np.zeros_like(BrAC)
+            st.html(f'<div class="empty"><span class="em">🥤</span>{escape(t("drinks_empty"))}</div>')
+        with st.container(horizontal=True, gap="small"):
+            if ss.get("_undo_drinks") is not None:
+                st.button(t("undo"), on_click=undo_remove)
+            if ss.drinks:
+                st.button(t("clear_drinks"), on_click=clear_drinks, type="tertiary")
+    _next_button(2)
 
-        def _summary(brac, bac):
-            """Peak index and the moment the curve is back under both limits."""
-            idx = int(np.argmax(brac))
-            over = np.nonzero((brac > limit_brac) | (bac > limit_bac))[0]
-            if len(over) == 0:
-                return idx, "never", None
-            if over[-1] >= len(times) - 1:
-                return idx, "later", None
-            return idx, "at", clock[over[-1] + 1]
-
-        def _fmt_dt(value: dt.datetime) -> str:
-            day = "" if value.date() == now.date() else f" ({value:%d/%m})"
-            return f"{value:%H:%M}{day}"
-
-        def _fmt_span(delta: dt.timedelta) -> str:
-            mins = int(round(delta.total_seconds() / 60))
-            h, m = divmod(mins, 60)
-            return f"{h} h {m:02d} min" if h else f"{m} min"
-
-        idx_max, below_kind, below_at = _summary(BrAC, BAC)
-        if below_kind == "never":
-            below_text = t("m_below_never")
-            status = ("success", t("status_never"))
-        elif below_kind == "later":
-            below_text = t("m_below_later")
-            status = ("error", t("status_over", time=below_text))
+# ---------- 3 · Prediction ----------
+with tab_result:
+    if res is None:
+        _hero("result", 3, "📈", t("result_title"), t("add_drinks_first"))
+        st.button(t("go_drinks"), type="primary", width="stretch", on_click=go_to, args=(1,), key="go_drinks")
+    else:
+        now, clock, main, alt = res["now"], res["clock"], res["main"], res["alt"]
+        BrAC, BAC, BrAC_alt, BAC_alt = res["BrAC"], res["BAC"], res["BrAC_alt"], res["BAC_alt"]
+        if main["kind"] == "never":
+            _hero("ok", 3, "✅", t("result_ok"), t("result_ok_sub"))
+        elif main["kind"] == "later":
+            _hero("bad", 3, "⛔", t("result_below_at"), t("result_over_sub"), big=t("m_below_later"))
         else:
-            below_text = _fmt_dt(below_at)
-            status = ("warning", t("status_over", time=below_text))
+            _hero("warn", 3, "⏱️", t("result_below_at"), t("result_over_sub"), big=_below_text(main, now))
 
-        with st.container(key="metrics"):
-            m1, m2, m3, m4 = st.columns(4)
-        m1.metric(t("m_peak"), f"{BrAC[idx_max]:.2f} mg/L", help=t("m_peak_help"))
-        m2.metric(t("m_peak_time"), f"{clock[idx_max]:%H:%M}")
-        m3.metric(t("m_bac"), f"{BAC[idx_max]:.2f} g/L")
-        m4.metric(t("m_below"), below_text)
-        getattr(st, status[0])(status[1])
-        bar_icon = {"success": "✅", "warning": "⚠️", "error": "⛔"}[status[0]]
-        ss._mobile_bar = (t("bar_ok", peak=f"{BrAC[idx_max]:.2f}") if below_kind == "never"
-                          else t("bar_result", icon=bar_icon, below=below_text, peak=f"{BrAC[idx_max]:.2f}"))
+        i = main["idx"]
+        total_g = sum(_grams(d) for d in ss.drinks)
+        st.html(
+            '<div class="stats">'
+            f'<div class="stat"><div class="k">{escape(t("m_peak"))}</div><div class="v">{BrAC[i]:.2f} <small>mg/L</small></div></div>'
+            f'<div class="stat"><div class="k">{escape(t("m_peak_time"))}</div><div class="v">{clock[i]:%H:%M}</div></div>'
+            f'<div class="stat"><div class="k">{escape(t("m_bac"))}</div><div class="v">{BAC[i]:.2f} <small>g/L</small></div></div>'
+            f'<div class="stat"><div class="k">{escape(t("m_total"))}</div><div class="v">{total_g:.0f} <small>g</small></div></div>'
+            "</div>"
+        )
 
-        def _chart(y, y_alt, limit, title, y_label, color):
-            fig = go.Figure()
-            fig.add_trace(go.Scatter(x=clock, y=y, mode="lines", line=dict(color=color, width=3), name=t("chart_all"),
-                                     hovertemplate="%{x|%H:%M} · %{y:.3f}<extra></extra>"))
-            fig.add_trace(go.Scatter(x=clock, y=y_alt, mode="lines", line=dict(color="#94a3b8", width=2, dash="dash"),
-                                     name=t("chart_without_last"), hovertemplate="%{x|%H:%M} · %{y:.3f}<extra></extra>"))
-            fig.add_hline(y=limit, line_dash="dash", line_color="#dc2626",
-                          annotation_text=t("chart_limit", v=f"{limit:.2f}"), annotation_position="top left")
-            drink_x = [start_dt + dt.timedelta(hours=off) for off in offsets]
-            fig.add_trace(go.Scatter(
-                x=drink_x, y=[0] * len(drink_x), mode="text",
-                text=[DRINKS[d["drink"]]["emoji"] for d in ss.drinks], textfont=dict(size=18),
-                hovertext=[f"{d['time']} · {t('drink_' + d['drink'])}" for d in ss.drinks], hoverinfo="text",
-                showlegend=False,
-            ))
-            if clock[0] <= now <= clock[-1]:
-                fig.add_shape(type="line", x0=now, x1=now, y0=0, y1=1, yref="paper", line=dict(color="#64748b", dash="dot"))
-                fig.add_annotation(x=now, y=1, yref="paper", text=t("chart_now"), showarrow=False, yanchor="bottom")
-            fig.update_layout(xaxis_title=t("chart_x"), yaxis_title=y_label,
-                              legend=dict(orientation="h", yanchor="bottom", y=1.06, xanchor="left", x=0),
-                              margin=dict(l=8, r=8, t=40, b=8), height=360, hovermode="x unified", dragmode=False)
-            # Fixed axes: a finger swipe scrolls the page instead of zooming the chart
-            fig.update_xaxes(tickformat="%H:%M", fixedrange=True)
-            fig.update_yaxes(rangemode="tozero", fixedrange=True)
-            return fig
+        show_bac = ss.get("show_bac", False)
+        y, y_alt = (BAC, BAC_alt) if show_bac else (BrAC, BrAC_alt)
+        limit = res["limit_bac"] if show_bac else res["limit_brac"]
+        color = "#7c3aed" if show_bac else "#0d9488"
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=clock, y=y, mode="lines", line=dict(color=color, width=4), name=t("chart_all"),
+                                 fill="tozeroy", fillcolor="rgba(13,148,136,.10)" if not show_bac else "rgba(124,58,237,.10)",
+                                 hovertemplate="%{x|%H:%M} · %{y:.2f}<extra></extra>"))
+        fig.add_trace(go.Scatter(x=clock, y=y_alt, mode="lines", line=dict(color="#94a3b8", width=2, dash="dash"),
+                                 name=t("chart_without_last"), hovertemplate="%{x|%H:%M} · %{y:.2f}<extra></extra>"))
+        fig.add_hline(y=limit, line_dash="dot", line_color="#dc2626", line_width=2,
+                      annotation_text=t("chart_limit", v=f"{limit:.2f}"), annotation_position="top right",
+                      annotation_font_color="#dc2626")
+        drink_x = [res["start_dt"] + dt.timedelta(hours=off) for off in res["offsets"]]
+        fig.add_trace(go.Scatter(x=drink_x, y=[0] * len(drink_x), mode="text",
+                                 text=[DRINKS[d["drink"]]["emoji"] for d in ss.drinks], textfont=dict(size=18),
+                                 hoverinfo="skip", showlegend=False))
+        if clock[0] <= now <= clock[-1]:
+            fig.add_shape(type="line", x0=now, x1=now, y0=0, y1=1, yref="paper", line=dict(color="#0f172a", dash="dot", width=1))
+            fig.add_annotation(x=now, y=1, yref="paper", text=t("chart_now"), showarrow=False, yanchor="bottom",
+                               font=dict(size=11, color="#0f172a"))
+        fig.update_layout(height=300, margin=dict(l=4, r=4, t=36, b=4), hovermode="x unified", dragmode=False,
+                          paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                          legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="left", x=0, font=dict(size=11)))
+        fig.update_xaxes(tickformat="%H:%M", fixedrange=True, showgrid=False)
+        fig.update_yaxes(rangemode="tozero", fixedrange=True, gridcolor="#e2e8f0",
+                         title=dict(text=t("chart_y_bac") if show_bac else t("chart_y"), font=dict(size=11)))
+        with st.container(key="card_chart"):
+            _label(t("chart_title_bac") if show_bac else t("chart_title"))
+            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False, "scrollZoom": False, "responsive": True})
+            st.toggle(t("show_bac"), key="show_bac")
 
-        chart_cfg = {"displayModeBar": False, "scrollZoom": False, "responsive": True}
-        st.markdown(f"**{t('chart_title')}**")
-        st.plotly_chart(_chart(BrAC, BrAC_alt, limit_brac, t("chart_title"), t("chart_y"), "#0f766e"),
-                        width="stretch", config=chart_cfg)
-        if st.toggle(t("show_bac"), key="show_bac"):
-            st.markdown(f"**{t('chart_title_bac')}**")
-            st.plotly_chart(_chart(BAC, BAC_alt, limit_bac, t("chart_title_bac"), t("chart_y_bac"), "#7c3aed"),
-                            width="stretch", config=chart_cfg)
-
-        # ---- What if you skip the last drink? ----
-        last = ss.drinks[skip_idx]
-        st.markdown(f"#### {t('whatif_title')}")
-        st.caption(t("whatif_caption", drink=f"{DRINKS[last['drink']]['emoji']} {t('drink_' + last['drink'])}", time=last["time"]))
-        if len(doses) == 1:
-            st.success(t("whatif_only_one"))
+        # What if you skip the last drink?
+        last = ss.drinks[-1]
+        if len(ss.drinks) == 1:
+            body, sub = t("whatif_none"), t("whatif_only_one")
+        elif alt["kind"] == "never":
+            body, sub = t("whatif_ok_big"), t("whatif_never_short")
         else:
-            alt_idx, alt_kind, alt_at = _summary(BrAC_alt, BAC_alt)
-            if alt_kind == "never":
-                alt_below = t("m_below_never")
-            elif alt_kind == "later":
-                alt_below = t("m_below_later")
+            body = _below_text(alt, now)
+            if main["kind"] == "at" and alt["kind"] == "at" and alt["at"] < main["at"]:
+                sub = t("whatif_earlier_short", span=_fmt_span(main["at"] - alt["at"]))
             else:
-                alt_below = _fmt_dt(alt_at)
-            with st.container(key="whatif_metrics"):
-                w1, w2, w3 = st.columns(3)
-            w1.metric(t("m_peak"), f"{BrAC_alt[alt_idx]:.2f} mg/L",
-                      delta=f"{BrAC_alt[alt_idx] - BrAC[idx_max]:+.2f} mg/L", delta_color="inverse")
-            w2.metric(t("m_bac"), f"{BAC_alt[alt_idx]:.2f} g/L",
-                      delta=f"{BAC_alt[alt_idx] - BAC[idx_max]:+.2f} g/L", delta_color="inverse")
-            w3.metric(t("m_below"), alt_below)
-            if below_kind != "never" and alt_kind == "never":
-                st.success(t("whatif_never"))
-            elif below_kind == "at" and alt_kind == "at" and alt_at < below_at:
-                st.info(t("whatif_earlier", time=alt_below, span=_fmt_span(below_at - alt_at)))
-            elif below_kind == "later" and alt_kind == "at":
-                st.info(t("whatif_at", time=alt_below))
-            elif below_kind == "never":
-                st.success(t("whatif_both_ok"))
-            else:
-                st.warning(t("whatif_same"))
+                sub = t("whatif_same_short")
+        st.html(
+            f'<div class="whatif"><div class="t">🤔 {escape(t("whatif_title_short", drink=_drink_label(last["drink"])))}</div>'
+            f'<div class="big">{escape(body)}</div><div class="s">{escape(sub)}</div></div>'
+        )
 
-        out_df = pd.DataFrame({"time": [c.strftime("%Y-%m-%d %H:%M:%S") for c in clock], "t_h": times,
+        with st.container(key="card_limit"):
+            _label(t("limit"))
+            st.segmented_control(t("limit"), ["general", "novice", "custom"], key="limit_profile",
+                                 format_func=lambda k: t(f"limit_{k}_short"), required=True,
+                                 label_visibility="collapsed", width="stretch")
+            if ss.limit_profile == "custom":
+                lc1, lc2 = st.columns(2)
+                lc1.number_input(t("limit_brac"), 0.0, 1.5, key="limit_brac", step=0.01, format="%.2f")
+                lc2.number_input(t("limit_bac"), 0.0, 3.0, key="limit_bac", step=0.05, format="%.2f")
+            else:
+                st.caption(t(f"limit_{ss.limit_profile}"))
+
+        out_df = pd.DataFrame({"time": [c.strftime("%Y-%m-%d %H:%M:%S") for c in clock], "t_h": res["times"],
                                "BAC_g_per_L": BAC, "BrAC_mg_per_L": BrAC,
                                "BAC_without_last_g_per_L": BAC_alt, "BrAC_without_last_mg_per_L": BrAC_alt})
-        st.download_button(t("export"), data=out_df.to_csv(index=False).encode("utf-8"),
-                           file_name="brac_bac_simulation.csv", mime="text/csv")
+        st.download_button(t("export"), data=out_df.to_csv(index=False).encode("utf-8"), icon="⬇️",
+                           file_name="brac_bac_simulation.csv", mime="text/csv", width="stretch")
+        st.caption(t("disclaimer"))
 
-# Sticky summary bar at the bottom of the screen (phones only, via CSS)
-with st.container(key="mobile_bar"):
-    st.markdown(ss._mobile_bar)
+# ---------- 4 · Advanced ----------
+with tab_adv:
+    _hero("advanced", 4, "⚙️", t("advanced_title"), t("advanced_intro"))
+    with st.container(key="card_adv_body"):
+        _label(t("adv_body"))
+        st.slider(t("tolerance"), 0.0, 1.0, key="adv_habitual_level", step=0.05, help=t("tolerance_help"))
+        st.slider(t("carbonation"), 0.7, 1.5, key="adv_carbonation_factor", step=0.05)
+        st.slider(t("breath_temp"), 31.0, 37.0, key="adv_breath_temp_c", step=0.1)
+    with st.container(key="card_adv_model"):
+        _label(t("adv_model"))
+        st.radio(t("vd_method"), ["watson", "fixed_r"], key="adv_vd_method", format_func=lambda k: t(f"vd_{k}"))
+        st.slider(t("r_widmark"), 0.45, 0.80, key="adv_r_widmark", step=0.01, disabled=ss.adv_vd_method != "fixed_r")
+        st.number_input(t("ka"), 0.1, 8.0, key="adv_ka_h", step=0.1)
+        st.selectbox(t("elim_mode"), ["mm", "zero", "ke"], key="adv_elimination_mode", format_func=lambda k: t(f"elim_{k}"))
+        e1, e2 = st.columns(2)
+        e1.number_input(t("vmax"), 0.05, 0.60, key="adv_Vmax_g_per_L_h", step=0.01)
+        e2.number_input(t("km"), 0.02, 0.60, key="adv_Km_g_per_L", step=0.01)
+        e1.number_input(t("beta"), 0.05, 0.60, key="adv_beta_g_per_L_h", step=0.01)
+        e2.number_input(t("ke"), 0.05, 0.60, key="adv_ke_h", step=0.01)
+        e1.number_input(t("bbr_base"), 1500.0, 3000.0, key="adv_BBR_base", step=50.0)
+        e2.number_input(t("bbr_coeff"), -0.20, 0.20, key="adv_bbr_temp_coeff_per_deg", step=0.005, format="%.3f")
+        st.slider(t("dt"), 0.001, 0.01, key="adv_dt_h", step=0.0005, format="%.4f", help=t("dt_help"))
+        st.button(t("reset_advanced"), on_click=reset_advanced, icon="🔄", width="stretch")
+    with st.expander(t("drinks_table")):
+        st.dataframe(
+            pd.DataFrame(
+                {
+                    t("tbl_drink"): [_drink_label(k) for k in DRINKS],
+                    t("tbl_ml"): [d["ml"] for d in DRINKS.values()],
+                    t("tbl_abv"): [f"{d['abv'] * 100:g} %" for d in DRINKS.values()],
+                    t("tbl_gas"): [t("yes") if d["carbonated"] else t("no") for d in DRINKS.values()],
+                }
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+    with st.expander(t("notes")):
+        st.markdown(t("notes_body"))
+    with st.container(key="card_privacy"):
+        _label(t("privacy_title"))
+        st.caption(t("privacy"))
+        st.button(t("forget"), on_click=forget_me, width="stretch")
+
 
 # =========================
 # Remember everything in the browser
