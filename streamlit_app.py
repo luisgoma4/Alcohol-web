@@ -451,18 +451,42 @@ with result_box:
         times, BAC, BrAC = times[:end_idx], BAC[:end_idx], BrAC[:end_idx]
         clock = [start_dt + dt.timedelta(hours=float(h)) for h in times]
 
-        idx_max = int(np.argmax(BrAC))
-        over = np.nonzero((BrAC > limit_brac) | (BAC > limit_bac))[0]
-        if len(over) == 0:
+        # Same night without the last drink (latest by time; drinks are kept sorted)
+        skip_idx = len(ss.drinks) - 1
+        if len(doses) > 1:
+            _, BAC_alt, BrAC_alt = run_simulation(subject_kw, options_kw, doses[:skip_idx], duration_h, ss.adv_dt_h)
+            BAC_alt, BrAC_alt = BAC_alt[:end_idx], BrAC_alt[:end_idx]
+        else:
+            BAC_alt, BrAC_alt = np.zeros_like(BAC), np.zeros_like(BrAC)
+
+        def _summary(brac, bac):
+            """Peak index and the moment the curve is back under both limits."""
+            idx = int(np.argmax(brac))
+            over = np.nonzero((brac > limit_brac) | (bac > limit_bac))[0]
+            if len(over) == 0:
+                return idx, "never", None
+            if over[-1] >= len(times) - 1:
+                return idx, "later", None
+            return idx, "at", clock[over[-1] + 1]
+
+        def _fmt_dt(value: dt.datetime) -> str:
+            day = "" if value.date() == now.date() else f" ({value:%d/%m})"
+            return f"{value:%H:%M}{day}"
+
+        def _fmt_span(delta: dt.timedelta) -> str:
+            mins = int(round(delta.total_seconds() / 60))
+            h, m = divmod(mins, 60)
+            return f"{h} h {m:02d} min" if h else f"{m} min"
+
+        idx_max, below_kind, below_at = _summary(BrAC, BAC)
+        if below_kind == "never":
             below_text = t("m_below_never")
             status = ("success", t("status_never"))
-        elif over[-1] >= len(times) - 1:
+        elif below_kind == "later":
             below_text = t("m_below_later")
-            status = ("error", t("status_over", time=t("m_below_later")))
+            status = ("error", t("status_over", time=below_text))
         else:
-            below_at = clock[over[-1] + 1]
-            day = "" if below_at.date() == now.date() else f" ({below_at:%d/%m})"
-            below_text = f"{below_at:%H:%M}{day}"
+            below_text = _fmt_dt(below_at)
             status = ("warning", t("status_over", time=below_text))
 
         m1, m2, m3, m4 = st.columns(4)
@@ -472,10 +496,12 @@ with result_box:
         m4.metric(t("m_below"), below_text)
         getattr(st, status[0])(status[1])
 
-        def _chart(y, limit, title, y_label, color):
+        def _chart(y, y_alt, limit, title, y_label, color):
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=clock, y=y, mode="lines", line=dict(color=color, width=3), name=y_label,
+            fig.add_trace(go.Scatter(x=clock, y=y, mode="lines", line=dict(color=color, width=3), name=t("chart_all"),
                                      hovertemplate="%{x|%H:%M} · %{y:.3f}<extra></extra>"))
+            fig.add_trace(go.Scatter(x=clock, y=y_alt, mode="lines", line=dict(color="#94a3b8", width=2, dash="dash"),
+                                     name=t("chart_without_last"), hovertemplate="%{x|%H:%M} · %{y:.3f}<extra></extra>"))
             fig.add_hline(y=limit, line_dash="dash", line_color="#dc2626",
                           annotation_text=t("chart_limit", v=f"{limit:.2f}"), annotation_position="top left")
             drink_x = [start_dt + dt.timedelta(hours=off) for off in offsets]
@@ -488,18 +514,51 @@ with result_box:
             if clock[0] <= now <= clock[-1]:
                 fig.add_shape(type="line", x0=now, x1=now, y0=0, y1=1, yref="paper", line=dict(color="#64748b", dash="dot"))
                 fig.add_annotation(x=now, y=1, yref="paper", text=t("chart_now"), showarrow=False, yanchor="bottom")
-            fig.update_layout(title=title, xaxis_title=t("chart_x"), yaxis_title=y_label, showlegend=False,
-                              margin=dict(l=10, r=10, t=50, b=10), height=380, hovermode="x unified")
+            fig.update_layout(title=title, xaxis_title=t("chart_x"), yaxis_title=y_label,
+                              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                              margin=dict(l=10, r=10, t=60, b=10), height=400, hovermode="x unified")
             fig.update_xaxes(tickformat="%H:%M")
             fig.update_yaxes(rangemode="tozero")
             return fig
 
-        st.plotly_chart(_chart(BrAC, limit_brac, t("chart_title"), t("chart_y"), "#0f766e"), width="stretch")
+        st.plotly_chart(_chart(BrAC, BrAC_alt, limit_brac, t("chart_title"), t("chart_y"), "#0f766e"), width="stretch")
         if st.toggle(t("show_bac"), key="show_bac"):
-            st.plotly_chart(_chart(BAC, limit_bac, t("chart_title_bac"), t("chart_y_bac"), "#7c3aed"), width="stretch")
+            st.plotly_chart(_chart(BAC, BAC_alt, limit_bac, t("chart_title_bac"), t("chart_y_bac"), "#7c3aed"), width="stretch")
+
+        # ---- What if you skip the last drink? ----
+        last = ss.drinks[skip_idx]
+        st.markdown(f"#### {t('whatif_title')}")
+        st.caption(t("whatif_caption", drink=f"{DRINKS[last['drink']]['emoji']} {t('drink_' + last['drink'])}", time=last["time"]))
+        if len(doses) == 1:
+            st.success(t("whatif_only_one"))
+        else:
+            alt_idx, alt_kind, alt_at = _summary(BrAC_alt, BAC_alt)
+            if alt_kind == "never":
+                alt_below = t("m_below_never")
+            elif alt_kind == "later":
+                alt_below = t("m_below_later")
+            else:
+                alt_below = _fmt_dt(alt_at)
+            w1, w2, w3 = st.columns(3)
+            w1.metric(t("m_peak"), f"{BrAC_alt[alt_idx]:.2f} mg/L",
+                      delta=f"{BrAC_alt[alt_idx] - BrAC[idx_max]:+.2f} mg/L", delta_color="inverse")
+            w2.metric(t("m_bac"), f"{BAC_alt[alt_idx]:.2f} g/L",
+                      delta=f"{BAC_alt[alt_idx] - BAC[idx_max]:+.2f} g/L", delta_color="inverse")
+            w3.metric(t("m_below"), alt_below)
+            if below_kind != "never" and alt_kind == "never":
+                st.success(t("whatif_never"))
+            elif below_kind == "at" and alt_kind == "at" and alt_at < below_at:
+                st.info(t("whatif_earlier", time=alt_below, span=_fmt_span(below_at - alt_at)))
+            elif below_kind == "later" and alt_kind == "at":
+                st.info(t("whatif_at", time=alt_below))
+            elif below_kind == "never":
+                st.success(t("whatif_both_ok"))
+            else:
+                st.warning(t("whatif_same"))
 
         out_df = pd.DataFrame({"time": [c.strftime("%Y-%m-%d %H:%M:%S") for c in clock], "t_h": times,
-                               "BAC_g_per_L": BAC, "BrAC_mg_per_L": BrAC})
+                               "BAC_g_per_L": BAC, "BrAC_mg_per_L": BrAC,
+                               "BAC_without_last_g_per_L": BAC_alt, "BrAC_without_last_mg_per_L": BrAC_alt})
         st.download_button(t("export"), data=out_df.to_csv(index=False).encode("utf-8"),
                            file_name="brac_bac_simulation.csv", mime="text/csv")
 
