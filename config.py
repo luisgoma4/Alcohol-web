@@ -16,7 +16,7 @@ DEFAULTS = {
 
 # Advanced model parameters (hidden at the bottom of the page)
 ADVANCED_DEFAULTS = {
-    "habitual_level": 0.5,
+    "habitual_level": 0.0,
     "breath_temp_c": 34.0,
     "vd_method": "watson",
     "r_widmark": 0.60,
