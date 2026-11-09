@@ -520,7 +520,7 @@ with st.container(key="swipe"):
 ss.setdefault("screen_idx", 0)
 labels = _screen_labels(ss.lang)
 tab_profile, tab_drinks, tab_result, tab_adv = st.tabs(
-    labels, key="screen", default=labels[ss.screen_idx], on_change=_on_screen_change
+    labels, key="screen", on_change=_on_screen_change  # a changing default= would rebuild every tab
 )
 
 if "_toast" in ss:
