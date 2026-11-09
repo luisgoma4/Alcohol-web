@@ -23,6 +23,7 @@
   --radius: 16px;
   --gap: .5rem;
   --nav: calc(4.6rem + env(safe-area-inset-bottom));
+  --ctl: clamp(44px, 7dvh, 64px);
 }
 
 /* Page canvas: a centred phone-width column on every screen size */
@@ -210,10 +211,35 @@ button:focus-visible, summary:focus-visible { outline: 2px solid #2dd4bf !import
 .st-key-card_chart [data-testid="stElementContainer"]:has([data-testid="stPlotlyChart"]) { flex: 1 1 0; min-height: 120px; height: auto !important; }
 .st-key-card_chart [data-testid="stPlotlyChart"], .st-key-card_chart .js-plotly-plot { height: 100% !important; }
 
+/* ---------- Screens with little content spread it over the visible height ----------
+   min-height, not height: if the content needs more (on-screen keyboard), the page scrolls */
+[data-testid="stTabPanel"]:has(.st-key-card_profile) > [data-testid="stVerticalBlock"],
+[data-testid="stTabPanel"]:has(.st-key-card_privacy) > [data-testid="stVerticalBlock"] {
+  min-height: calc(100dvh - var(--nav) - 1rem);
+}
+[data-testid="stLayoutWrapper"]:has(> .st-key-card_profile) { flex: 1 1 auto; display: flex; flex-direction: column; }
+.st-key-card_profile { flex: 1 1 auto; justify-content: space-evenly; }
+.st-key-card_lang [data-testid="stButtonGroup"] button, .st-key-card_profile [data-testid="stButtonGroup"] button,
+.st-key-next_1 button { min-height: var(--ctl); }
+.st-key-card_profile [data-testid="stNumberInputContainer"] { height: var(--ctl); }
+.st-key-card_profile [data-testid="stNumberInput"] > div:last-child { flex-basis: calc(2 * min(var(--ctl), 52px) + 6rem); }
+.st-key-card_profile [data-testid="stNumberInputStepDown"], .st-key-card_profile [data-testid="stNumberInputStepUp"] {
+  width: min(var(--ctl), 52px) !important; min-width: min(var(--ctl), 52px); min-height: var(--ctl);
+}
+.st-key-card_profile [data-testid="stNumberInputContainer"] input { font-size: clamp(1.2rem, 2.8dvh, 1.6rem) !important; }
+.st-key-card_profile [data-testid="stNumberInput"] label p { font-size: clamp(.95rem, 2dvh, 1.15rem); }
+
+/* Advanced, all sections closed: the rows share the height; the privacy card sits at the bottom */
+[data-testid="stTabPanel"]:has(.st-key-card_privacy):not(:has(details[open])) [data-testid="stExpander"] summary {
+  min-height: max(44px, calc((100dvh - var(--nav) - 18.5rem) / 4));
+}
+[data-testid="stTabPanel"]:has(.st-key-card_privacy):not(:has(details[open])) [data-testid="stExpander"] summary p { font-size: 1.05rem; font-weight: 600; }
+[data-testid="stLayoutWrapper"]:has(> .st-key-card_privacy), .st-key-card_privacy { margin-top: auto; }
+
 /* ---------- Advanced: long sections scroll inside when open ---------- */
 [data-testid="stExpander"] details { border-radius: 12px; border-color: var(--line); background: var(--card); }
 [data-testid="stExpander"] summary { min-height: 44px; padding-top: .35rem; padding-bottom: .35rem; }
-[data-testid="stExpanderDetails"] { max-height: max(130px, calc(100dvh - var(--nav) - 27rem)); overflow-y: auto; overscroll-behavior: contain; }
+[data-testid="stExpanderDetails"] { max-height: max(130px, calc(100dvh - var(--nav) - 28rem)); overflow-y: auto; overscroll-behavior: contain; }
 
 /* Toasts: stay inside narrow screens */
 @media (max-width: 480px) {
@@ -234,6 +260,11 @@ button:focus-visible, summary:focus-visible { outline: 2px solid #2dd4bf !import
 /* Tiles: emoji on top of the name */
 .st-key-add_buttons button span[data-has-shortcut] { display: flex !important; flex-direction: column; align-items: center; gap: .1rem; }
 .st-key-add_buttons button [data-testid="stIconEmoji"] { font-size: 1.3rem !important; line-height: 1 !important; }
+
+/* ---------- Tall screens: more air between blocks ---------- */
+@media (min-height: 780px) {
+  :root { --gap: .7rem; }
+}
 
 /* ---------- Short screens: squeeze what is left ---------- */
 @media (max-height: 700px) {
