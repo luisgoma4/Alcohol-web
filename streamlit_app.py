@@ -222,11 +222,13 @@ def repeat_drink(drink_id: int):
 def remove_drink(drink_id: int):
     ss._undo_drinks = list(ss.drinks)
     ss.drinks = [d for d in ss.drinks if d["id"] != drink_id]
+    ss._toast = ("removed", None)
 
 
 def clear_drinks():
     ss._undo_drinks = list(ss.drinks)
     ss.drinks = []
+    ss._toast = ("cleared", None)
 
 
 def undo_remove():
@@ -295,6 +297,12 @@ def _grams(d: dict) -> float:
     return d["ml"] * d["abv"] / 100.0 * 0.789
 
 
+def _num(value: float, decimals: int = 2) -> str:
+    """Number for display, with the decimal mark of the current language."""
+    text = f"{value:.{decimals}f}"
+    return text.replace(".", ",") if ss.lang == "es" else text
+
+
 def _drink_name(key: str) -> str:
     return t(f"drink_{key}")
 
@@ -325,7 +333,8 @@ def _next_button(idx: int):
               width="stretch", on_click=go_to, args=(idx,), key=f"next_{idx}")
 
 
-# Swipe left/right between screens on touch devices (plus scroll to top on change)
+# Swipe left/right between screens on touch devices (plus scroll to top on change),
+# and numeric keyboards plus range clamping for the number fields
 _SWIPE_JS = """
 export default function () {
   if (window.__bracSwipe) return;
@@ -334,10 +343,12 @@ export default function () {
     window.scrollTo({ top: 0 });
     document.querySelector('[data-testid="stMain"]')?.scrollTo({ top: 0 });
   };
+  // The chart sizes itself on window resize: it needs one when its screen appears
+  const afterChange = () => setTimeout(() => { toTop(); window.dispatchEvent(new Event('resize')); }, 50);
   let x0 = null, y0 = null, skip = false;
   document.addEventListener('touchstart', (e) => {
     const p = e.touches[0]; x0 = p.clientX; y0 = p.clientY;
-    skip = !!e.target.closest('[data-baseweb="slider"], input, textarea, [data-baseweb="popover"], .js-plotly-plot, [data-testid="stDataFrame"]');
+    skip = !!e.target.closest('[data-baseweb="slider"], input, textarea, [data-baseweb="popover"], .js-plotly-plot, [data-testid="stDataFrame"], [data-testid="stNumberInputContainer"]');
   }, { passive: true });
   document.addEventListener('touchend', (e) => {
     if (x0 === null || skip) { x0 = null; return; }
@@ -346,11 +357,40 @@ export default function () {
     const tabs = [...document.querySelectorAll('.st-key-screen [role="tab"]')];
     const i = tabs.findIndex((b) => b.getAttribute('aria-selected') === 'true');
     const j = dx < 0 ? i + 1 : i - 1;
-    if (j >= 0 && j < tabs.length) { tabs[j].click(); toTop(); }
+    if (j >= 0 && j < tabs.length) { tabs[j].click(); afterChange(); }
   }, { passive: true });
   document.addEventListener('click', (e) => {
-    if (e.target.closest('[role="tab"]') || e.target.closest('[class*="st-key-next_"]')) setTimeout(toTop, 50);
+    if (e.target.closest('[role="tab"]') || e.target.closest('[class*="st-key-next_"]')) afterChange();
   });
+
+  // Phones: digits-only keyboard for whole numbers, decimal pad for the rest.
+  // A field that accepts negatives keeps the default keyboard, which has a minus sign.
+  const numberFields = () => document.querySelectorAll('input[data-testid="stNumberInputField"]:not([inputmode])');
+  const setKeyboards = () => numberFields().forEach((el) => {
+    if (Number(el.min) < 0) return;
+    el.inputMode = Number.isInteger(Number(el.step)) ? 'numeric' : 'decimal';
+  });
+  setKeyboards();
+  new MutationObserver(setKeyboards).observe(document.body, { childList: true, subtree: true });
+
+  // Streamlit keeps an out-of-range number on screen while calculating with the old
+  // one, and turns an empty field into the minimum. Fix the text before it commits.
+  const lastGood = new WeakMap();
+  const isNumberField = (el) => el.matches?.('input[data-testid="stNumberInputField"]');
+  const write = (el, value) => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  };
+  const keepInRange = (el) => {
+    const n = el.valueAsNumber;
+    if (Number.isNaN(n)) { if (lastGood.has(el)) write(el, lastGood.get(el)); }
+    else if (n < Number(el.min)) write(el, el.min);
+    else if (n > Number(el.max)) write(el, el.max);
+    lastGood.set(el, el.value);
+  };
+  document.addEventListener('focusin', (e) => { if (isNumberField(e.target)) lastGood.set(e.target, e.target.value); }, true);
+  document.addEventListener('focusout', (e) => { if (isNumberField(e.target)) keepInRange(e.target); }, true);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && isNumberField(e.target)) keepInRange(e.target); }, true);
 }
 """
 _swipe = st.components.v2.component("brac_swipe", js=_SWIPE_JS, isolate_styles=False)
@@ -480,12 +520,15 @@ with st.container(key="swipe"):
 ss.setdefault("screen_idx", 0)
 labels = _screen_labels(ss.lang)
 tab_profile, tab_drinks, tab_result, tab_adv = st.tabs(
-    labels, key="screen", default=labels[ss.screen_idx], on_change=_on_screen_change
+    labels, key="screen", on_change=_on_screen_change  # a changing default= would rebuild every tab
 )
 
 if "_toast" in ss:
-    _, new = ss.pop("_toast")
-    st.toast(t("added_toast", drink=_drink_label(new["drink"]), time=new["time"]), icon="✅")
+    kind, new = ss.pop("_toast")
+    if kind == "added":
+        st.toast(t("added_toast", drink=_drink_label(new["drink"]), time=new["time"]), icon="✅")
+    else:
+        st.toast(t(f"{kind}_toast"), icon="🗑️")
 
 # ---------- 1 · Profile ----------
 with tab_profile:
@@ -495,12 +538,12 @@ with tab_profile:
         st.segmented_control(t("language"), list(LANGUAGES), key="lang", format_func=LANGUAGES.get, required=True,
                              label_visibility="collapsed", width="stretch", on_change=_on_lang_change)
     with st.container(key="card_profile"):
-        _label(t("sex"))
-        st.segmented_control(t("sex"), ["male", "female"], key="sex", format_func=lambda s: t(f"sex_{s}"),
-                             required=True, label_visibility="collapsed", width="stretch")
-        for key, lo, hi, unit in (("age_years", 18, 100, t("unit_years")), ("weight_kg", 35, 200, "kg"), ("height_cm", 130, 220, "cm")):
-            st.html(f'<div class="value-pill"><span>{escape(t(key))}</span><span>{ss[key]} {unit}</span></div>')
-            st.slider(t(key), lo, hi, key=key, step=1, label_visibility="collapsed")
+        with st.container(key="row_sex"):
+            _label(t("sex"))
+            st.segmented_control(t("sex"), ["male", "female"], key="sex", format_func=lambda s: t(f"sex_{s}"),
+                                 required=True, label_visibility="collapsed", width="stretch")
+        for key, lo, hi, label in (("age_years", 18, 100, "age"), ("weight_kg", 35, 200, "weight"), ("height_cm", 130, 220, "height")):
+            st.number_input(t(label), lo, hi, key=key, step=1)
     _next_button(1)
 
 # ---------- 2 · Drinks ----------
@@ -514,9 +557,10 @@ with tab_drinks:
     _hero("drinks", 2, "🍺", t("drinks_title"), badge=badge)
 
     with st.container(key="card_add"):
-        _label(t("add_when"))
-        st.segmented_control(t("add_when"), ["now", "custom"], key="add_when", required=True,
-                             format_func=lambda k: t(f"add_when_{k}"), label_visibility="collapsed", width="stretch")
+        with st.container(key="row_when"):
+            _label(t("add_when"))
+            st.segmented_control(t("add_when"), ["now", "custom"], key="add_when", required=True,
+                                 format_func=lambda k: t(f"add_when_{k}"), label_visibility="collapsed", width="stretch")
         if ss.add_when == "custom":
             st.time_input(t("add_time"), value=ss.get("add_time") or _round5(_now()).time(), key="add_time", step=300,
                           label_visibility="collapsed")
@@ -524,7 +568,7 @@ with tab_drinks:
         with st.container(key="add_buttons"):
             for key in QUICK_DRINKS:
                 d = DRINKS[key]
-                st.button(f"{_drink_name(key)} *{d['ml']} ml*", icon=d["emoji"], key=f"add_{key}",
+                st.button(f"{t(f'tile_{key}')} *{d['ml']} ml*", icon=d["emoji"], key=f"add_{key}",
                           on_click=add_drink, args=(key,))
 
     with st.container(key="card_food"):
@@ -533,10 +577,21 @@ with tab_drinks:
                              required=True, label_visibility="collapsed", width="stretch")
 
     with st.container(key="card_list"):
-        if ss.drinks:
-            total_g = sum(_grams(d) for d in ss.drinks)
-            _label(t("your_drinks", n=len(ss.drinks), g=f"{total_g:.0f}"))
-            for d in ss.drinks:
+        with st.container(horizontal=True, vertical_alignment="center", gap="small", key="list_head"):
+            if ss.drinks:
+                total_g = sum(_grams(d) for d in ss.drinks)
+                st.html(f'<div class="label">{escape(t("your_drinks", n=len(ss.drinks), g=f"{total_g:.0f}"))}</div>', width="stretch")
+            else:
+                st.html(f'<div class="label">{escape(t("your_drinks_none"))}</div>', width="stretch")
+            if ss.get("_undo_drinks") is not None:
+                st.button(t("undo"), on_click=undo_remove)
+            if ss.drinks:
+                st.button(t("clear_drinks"), on_click=clear_drinks, type="tertiary")
+        with st.container(key="drink_scroll"):
+            if not ss.drinks:
+                st.html(f'<div class="empty"><span class="em">🥤</span>{escape(t("drinks_empty"))}</div>')
+            # Newest first, so a drink just added is visible without scrolling the list
+            for d in reversed(ss.drinks):
                 did = d["id"]
                 with st.container(horizontal=True, vertical_alignment="center", gap="small", key=f"drink_card_{did}"):
                     st.html(
@@ -545,7 +600,7 @@ with tab_drinks:
                         f'<div class="meta">{d["time"]} · {d["ml"]:g} ml</div></div></div>',
                         width="stretch",
                     )
-                    with st.popover("✏️", help=t("edit_help")):
+                    with st.popover(":material/edit:", help=t("edit_help")):
                         st.selectbox(t("col_drink"), list(DRINKS), index=list(DRINKS).index(d["drink"]),
                                      key=_edit_key(d, "drink"), format_func=_drink_label,
                                      on_change=edit_drink, args=(did, "drink"))
@@ -555,15 +610,8 @@ with tab_drinks:
                                         format="%.0f", help=t("col_ml_help"), on_change=edit_drink, args=(did, "ml"))
                         st.number_input(t("col_abv"), 0.5, 96.0, value=float(d["abv"]), key=_edit_key(d, "abv"), step=0.5,
                                         format="%.1f", on_change=edit_drink, args=(did, "abv"))
-                    st.button("➕", key=f"rep_{did}", help=t("repeat_help"), on_click=repeat_drink, args=(did,))
-                    st.button("🗑️", key=f"del_{did}", help=t("remove_help"), on_click=remove_drink, args=(did,))
-        else:
-            st.html(f'<div class="empty"><span class="em">🥤</span>{escape(t("drinks_empty"))}</div>')
-        with st.container(horizontal=True, gap="small"):
-            if ss.get("_undo_drinks") is not None:
-                st.button(t("undo"), on_click=undo_remove)
-            if ss.drinks:
-                st.button(t("clear_drinks"), on_click=clear_drinks, type="tertiary")
+                    st.button(":material/add:", key=f"rep_{did}", help=t("repeat_help"), on_click=repeat_drink, args=(did,))
+                    st.button(":material/delete:", key=f"del_{did}", help=t("remove_help"), on_click=remove_drink, args=(did,))
     _next_button(2)
 
 # ---------- 3 · Prediction ----------
@@ -585,10 +633,10 @@ with tab_result:
         total_g = sum(_grams(d) for d in ss.drinks)
         st.html(
             '<div class="stats">'
-            f'<div class="stat"><div class="k">{escape(t("m_peak"))}</div><div class="v">{BrAC[i]:.2f} <small>mg/L</small></div></div>'
-            f'<div class="stat"><div class="k">{escape(t("m_peak_time"))}</div><div class="v">{clock[i]:%H:%M}</div></div>'
-            f'<div class="stat"><div class="k">{escape(t("m_bac"))}</div><div class="v">{BAC[i]:.2f} <small>g/L</small></div></div>'
-            f'<div class="stat"><div class="k">{escape(t("m_total"))}</div><div class="v">{total_g:.0f} <small>g</small></div></div>'
+            f'<div class="stat"><div class="k">{escape(t("m_peak_short"))}</div><div class="v">{_num(BrAC[i])} <small>mg/L</small></div></div>'
+            f'<div class="stat"><div class="k">{escape(t("m_peak_time_short"))}</div><div class="v">{clock[i]:%H:%M}</div></div>'
+            f'<div class="stat"><div class="k">{escape(t("m_bac_short"))}</div><div class="v">{_num(BAC[i])} <small>g/L</small></div></div>'
+            f'<div class="stat"><div class="k">{escape(t("m_total_short"))}</div><div class="v">{total_g:.0f} <small>g</small></div></div>'
             "</div>"
         )
 
@@ -603,7 +651,7 @@ with tab_result:
         fig.add_trace(go.Scatter(x=clock, y=y_alt, mode="lines", line=dict(color="#64748b", width=2, dash="dash"),
                                  name=t("chart_without_last"), hovertemplate="%{x|%H:%M} · %{y:.2f}<extra></extra>"))
         fig.add_hline(y=limit, line_dash="dot", line_color="#f87171", line_width=2,
-                      annotation_text=t("chart_limit", v=f"{limit:.2f}"), annotation_position="top right",
+                      annotation_text=t("chart_limit", v=_num(limit)), annotation_position="top right",
                       annotation_font_color="#f87171")
         drink_x = [res["start_dt"] + dt.timedelta(hours=off) for off in res["offsets"]]
         fig.add_trace(go.Scatter(x=drink_x, y=[0] * len(drink_x), mode="text",
@@ -613,16 +661,24 @@ with tab_result:
             fig.add_shape(type="line", x0=now, x1=now, y0=0, y1=1, yref="paper", line=dict(color="#cbd5e1", dash="dot", width=1))
             fig.add_annotation(x=now, y=1, yref="paper", text=t("chart_now"), showarrow=False, yanchor="bottom",
                                font=dict(size=11, color="#cbd5e1"))
-        fig.update_layout(height=300, margin=dict(l=4, r=4, t=36, b=4), hovermode="x unified", dragmode=False,
+        # No fixed height: the chart fills the space the screen leaves for it (see style.css)
+        fig.update_layout(margin=dict(l=4, r=4, t=26, b=4), hovermode="x unified", dragmode=False,
+                          separators=",." if ss.lang == "es" else ".,",
                           paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-                          legend=dict(orientation="h", yanchor="bottom", y=1.04, xanchor="left", x=0, font=dict(size=11)))
+                          legend=dict(orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0, font=dict(size=11)))
         fig.update_xaxes(tickformat="%H:%M", fixedrange=True, showgrid=False)
         fig.update_yaxes(rangemode="tozero", fixedrange=True, gridcolor="#273248",
                          title=dict(text=t("chart_y_bac") if show_bac else t("chart_y"), font=dict(size=11)))
         with st.container(key="card_chart"):
             _label(t("chart_title_bac") if show_bac else t("chart_title"))
-            st.plotly_chart(fig, width="stretch", config={"displayModeBar": False, "scrollZoom": False, "responsive": True})
-            st.toggle(t("show_bac"), key="show_bac")
+            st.plotly_chart(fig, width="stretch", height="stretch", config={"displayModeBar": False, "scrollZoom": False, "responsive": True})
+            with st.container(horizontal=True, vertical_alignment="center", gap="small", key="chart_tools"):
+                st.toggle(t("show_bac"), key="show_bac", width="stretch")
+                out_df = pd.DataFrame({"time": [c.strftime("%Y-%m-%d %H:%M:%S") for c in clock], "t_h": res["times"],
+                                       "BAC_g_per_L": BAC, "BrAC_mg_per_L": BrAC,
+                                       "BAC_without_last_g_per_L": BAC_alt, "BrAC_without_last_mg_per_L": BrAC_alt})
+                st.download_button(t("export_short"), data=out_df.to_csv(index=False).encode("utf-8"), icon=":material/download:",
+                                   help=t("export"), file_name="brac_bac_simulation.csv", mime="text/csv")
 
         # What if you skip the last drink?
         last = ss.drinks[-1]
@@ -642,45 +698,42 @@ with tab_result:
         )
 
         with st.container(key="card_limit"):
-            _label(t("limit"))
-            st.segmented_control(t("limit"), ["general", "novice", "custom"], key="limit_profile",
-                                 format_func=lambda k: t(f"limit_{k}_short"), required=True,
-                                 label_visibility="collapsed", width="stretch")
+            with st.container(key="row_limit"):
+                _label(t("limit_short"))
+                st.segmented_control(t("limit"), ["general", "novice", "custom"], key="limit_profile",
+                                     format_func=lambda k: t(f"limit_{k}_short"), required=True,
+                                     label_visibility="collapsed", width="stretch")
             if ss.limit_profile == "custom":
-                lc1, lc2 = st.columns(2)
-                lc1.number_input(t("limit_brac"), 0.0, 1.5, key="limit_brac", step=0.01, format="%.2f")
-                lc2.number_input(t("limit_bac"), 0.0, 3.0, key="limit_bac", step=0.05, format="%.2f")
+                with st.container(key="cols_limit"):
+                    lc1, lc2 = st.columns(2)
+                    lc1.number_input(t("limit_brac"), 0.0, 1.5, key="limit_brac", step=0.01, format="%.2f")
+                    lc2.number_input(t("limit_bac"), 0.0, 3.0, key="limit_bac", step=0.05, format="%.2f")
             else:
                 st.caption(t(f"limit_{ss.limit_profile}"))
 
-        out_df = pd.DataFrame({"time": [c.strftime("%Y-%m-%d %H:%M:%S") for c in clock], "t_h": res["times"],
-                               "BAC_g_per_L": BAC, "BrAC_mg_per_L": BrAC,
-                               "BAC_without_last_g_per_L": BAC_alt, "BrAC_without_last_mg_per_L": BrAC_alt})
-        st.download_button(t("export"), data=out_df.to_csv(index=False).encode("utf-8"), icon="⬇️",
-                           file_name="brac_bac_simulation.csv", mime="text/csv", width="stretch")
         st.caption(t("disclaimer"))
 
 # ---------- 4 · Advanced ----------
 with tab_adv:
     _hero("advanced", 4, "⚙️", t("advanced_title"), t("advanced_intro"))
-    with st.container(key="card_adv_body"):
-        _label(t("adv_body"))
-        st.slider(t("tolerance"), 0.0, 1.0, key="adv_habitual_level", step=0.05, help=t("tolerance_help"))
-        st.slider(t("carbonation"), 0.7, 1.5, key="adv_carbonation_factor", step=0.05)
-        st.slider(t("breath_temp"), 31.0, 37.0, key="adv_breath_temp_c", step=0.1)
-    with st.container(key="card_adv_model"):
-        _label(t("adv_model"))
+    # Collapsed sections so the screen fits; the widgets stay mounted, so their values are kept
+    with st.expander(t("adv_body")):
+        st.number_input(t("tolerance"), 0.0, 1.0, key="adv_habitual_level", step=0.05, format="%.2f", help=t("tolerance_help"))
+        st.number_input(t("carbonation"), 0.7, 1.5, key="adv_carbonation_factor", step=0.05, format="%.2f")
+        st.number_input(t("breath_temp"), 31.0, 37.0, key="adv_breath_temp_c", step=0.1, format="%.1f")
+    with st.expander(t("adv_model")):
         st.radio(t("vd_method"), ["watson", "fixed_r"], key="adv_vd_method", format_func=lambda k: t(f"vd_{k}"))
         st.slider(t("r_widmark"), 0.45, 0.80, key="adv_r_widmark", step=0.01, disabled=ss.adv_vd_method != "fixed_r")
         st.number_input(t("ka"), 0.1, 8.0, key="adv_ka_h", step=0.1)
         st.selectbox(t("elim_mode"), ["mm", "zero", "ke"], key="adv_elimination_mode", format_func=lambda k: t(f"elim_{k}"))
-        e1, e2 = st.columns(2)
-        e1.number_input(t("vmax"), 0.05, 0.60, key="adv_Vmax_g_per_L_h", step=0.01)
-        e2.number_input(t("km"), 0.02, 0.60, key="adv_Km_g_per_L", step=0.01)
-        e1.number_input(t("beta"), 0.05, 0.60, key="adv_beta_g_per_L_h", step=0.01)
-        e2.number_input(t("ke"), 0.05, 0.60, key="adv_ke_h", step=0.01)
-        e1.number_input(t("bbr_base"), 1500.0, 3000.0, key="adv_BBR_base", step=50.0)
-        e2.number_input(t("bbr_coeff"), -0.20, 0.20, key="adv_bbr_temp_coeff_per_deg", step=0.005, format="%.3f")
+        with st.container(key="cols_model"):
+            e1, e2 = st.columns(2)
+            e1.number_input(t("vmax"), 0.05, 0.60, key="adv_Vmax_g_per_L_h", step=0.01)
+            e2.number_input(t("km"), 0.02, 0.60, key="adv_Km_g_per_L", step=0.01)
+            e1.number_input(t("beta"), 0.05, 0.60, key="adv_beta_g_per_L_h", step=0.01)
+            e2.number_input(t("ke"), 0.05, 0.60, key="adv_ke_h", step=0.01)
+            e1.number_input(t("bbr_base"), 1500.0, 3000.0, key="adv_BBR_base", step=50.0)
+            e2.number_input(t("bbr_coeff"), -0.20, 0.20, key="adv_bbr_temp_coeff_per_deg", step=0.005, format="%.3f")
         st.slider(t("dt"), 0.001, 0.01, key="adv_dt_h", step=0.0005, format="%.4f", help=t("dt_help"))
         st.button(t("reset_advanced"), on_click=reset_advanced, icon="🔄", width="stretch")
     with st.expander(t("drinks_table")):
